@@ -24,9 +24,7 @@ const processingLock = new Map();
 client.once("clientReady", () => {
     console.log(`✅ Bot online sebagai: ${client.user.tag}`);
     console.log(`📡 Tersambung ke ${client.guilds.cache.size} server`);
-    console.log(`⚡ BENI-GANTENG Protocol: ACTIVE`);
-    console.log(`🔧 Engine: Multi-Action Pipeline v2.0`);
-    client.user.setActivity("perintah lo", { type: ActivityType.Listening });
+    client.user.setActivity("Discord Bot Asistant", { type: ActivityType.Listening });
 });
 
 client.on("messageCreate", async (message) => {
