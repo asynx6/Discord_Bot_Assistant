@@ -1,11 +1,16 @@
 import { PermissionFlagsBits, ChannelType } from "discord.js";
 
 export async function cleanmessagehandler(message, instruction) {
-    const { channelName, amount, filterType, targetUser, reason } = instruction;
+    const { channelName, amount, filterType, targetUser, reason, name } = instruction;
     const botMember = message.guild.members.me;
 
     let targetChannels = [];
     let isGlobal = false;
+    
+    let finalTargetUser = targetUser;
+    if (!finalTargetUser && name && /^[0-9]+$/.test(name.replace(/[<@!>]/g, ""))) {
+        finalTargetUser = name;
+    }
 
     if (channelName && channelName.toUpperCase() !== "ALL") {
         const found = message.guild.channels.cache.find(c =>
@@ -27,7 +32,7 @@ export async function cleanmessagehandler(message, instruction) {
         return "Gue gak nemu channel yang bisa gue akses buat bersih-bersih nih.";
     }
 
-    const statusMsg = await message.reply(`🔍 **Sabar ya bos...** Gue lagi keliling **${targetChannels.length}** channel buat nyari pesan ${targetUser ? `dari <@${targetUser.replace(/[<@!>]/g, "")}>` : ""}...`).catch(() => null);
+    const statusMsg = await message.reply(`🔍 **Sabar ya bos...** Gue lagi keliling **${targetChannels.length}** channel buat nyari pesan ${finalTargetUser ? `dari <@${finalTargetUser.replace(/[<@!>]/g, "")}>` : ""}...`).catch(() => null);
 
     let totalDeleted = 0;
     let totalScannedChannels = 0;
@@ -42,8 +47,8 @@ export async function cleanmessagehandler(message, instruction) {
 
             messages = messages.filter(m => m.id !== message.id && m.id !== statusMsg?.id);
 
-            if (targetUser) {
-                const userId = targetUser.replace(/[<@!>]/g, "");
+            if (finalTargetUser) {
+                const userId = finalTargetUser.replace(/[<@!>]/g, "");
                 messages = messages.filter(m => m.author.id === userId);
             }
 
