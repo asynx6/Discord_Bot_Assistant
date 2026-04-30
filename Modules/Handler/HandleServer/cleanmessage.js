@@ -23,7 +23,7 @@ export async function cleanmessagehandler(message, instruction) {
     if (targetChannels.length === 0) {
         isGlobal = true;
         targetChannels = message.guild.channels.cache.filter(c =>
-            (c.type === ChannelType.GuildText || c.type === ChannelType.GuildAnnouncement) &&
+            c.isTextBased() &&
             botMember.permissionsIn(c).has(PermissionFlagsBits.ManageMessages)
         ).map(c => c);
     }
