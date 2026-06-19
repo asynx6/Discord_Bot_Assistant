@@ -46,7 +46,6 @@ try {
     envConfig = validateEnv({ strict: false });
     logger.info("env.validated", {
         hasAi: envConfig.hasAi,
-        aiSource: envConfig.aiSource,
         aiModel: envConfig.aiModel,
         aiBaseUrl: envConfig.aiBaseUrl,
         hasMongo: envConfig.hasMongo,

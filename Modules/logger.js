@@ -27,7 +27,7 @@ const SENSITIVE_KEYS = new Set([
     "password",
     "secret",
     "mongodb_uri",
-    "openrouter_api_key",
+    "ai_apikey",
     "token_bot",
     "discord_owner_id",
 ]);

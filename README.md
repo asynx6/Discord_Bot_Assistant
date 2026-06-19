@@ -41,7 +41,7 @@ Built with the **ASYNX6** architecture and powered by LLMs (e.g., GPT-4o-mini vi
 
 ### New in v1.4.0 — Super Agent, Anti-Phishing, Interactive UI & Auto-Diagnostic 🛡️
 - **🛡️ Real-Time Cross-Channel Anti-Phishing System** — Every incoming message is fingerprinted (normalized text + URL hash + per-image hash). If a user posts the *same composite hash* across **> 3 different channels** within a **2-second sliding window**, the bot immediately deletes the message from every tracked channel, locks the user for 60 seconds, and emits a `security.phishing.detected` log line. Zero AI involvement in the hot path — the decision is deterministic and O(1) per message.
-- **🎛️ Unified AI Configuration via `.env`** — All AI provider settings now live in `.env` under `AI_TOKEN`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`. The old `OPENROUTER_API_KEY` is still honored as a fallback for backward compatibility, but new deployments should use `AI_TOKEN`. Any OpenAI-compatible provider works: OpenRouter, DeepSeek, OpenAI, Anthropic-via-router, etc.
+- **🎛️ Unified AI Configuration via `.env`** — All AI provider settings now live in `.env` under `AI_APIKEY`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`. `AI_APIKEY` is the single canonical credential — any OpenAI-compatible provider works (OpenRouter, DeepSeek, OpenAI, Anthropic-via-router, etc.). The legacy `OPENROUTER_API_KEY` is no longer honored; rename it to `AI_APIKEY` in your `.env` when migrating.
 - **⏰ Dynamic Cron Scheduler & System Status Registry** — Built-in scheduler supports `dailyAt: "HH:MM"` (with IANA timezone), 5-field cron expressions, and one-shot delays. Every registered job is mirrored to `data/system_registry.json` so users can ask *“@Bot system apa yang lagi jalan?”* and get a transparent list. Toggle any system on/off via natural chat: *“@Bot turn off daily reminder”*.
 - **💾 Automated `.env` Writer & Token Solicitor** — When AI generates code that requires an external API key (e.g. `WEATHER_API_KEY`, `STRIPE_SECRET_KEY`), the AI **pauses**, asks the user in Discord for the token, and once received atomically appends it to `.env` (with backup). Bot then resumes code generation with the new env var available.
 - **🖼️ Discord Interactive Buttons (60s strict expiry)** — Critical confirmations now use native Discord button rows instead of text-based “Ya/Tidak”. Custom IDs encode `expiresAt` so the bot can deterministically expire any button after 60 seconds even if the bot restarts mid-confirmation.
@@ -98,14 +98,14 @@ Built with the **ASYNX6** architecture and powered by LLMs (e.g., GPT-4o-mini vi
    MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/yourdbname
 
    # AI provider (v1.4.0 — any OpenAI-compatible API works)
-   AI_TOKEN=your_ai_token
+   AI_APIKEY=your_ai_apikey
    AI_BASE_URL=https://openrouter.ai/api/v1
    AI_MODEL=openai/gpt-4o-mini
    AI_FALLBACK_MODEL=openai/gpt-3.5-turbo
    ```
 
    **Required:** `TOKEN_BOT`, `DISCORD_OWNER_ID`
-   **Recommended:** `AI_TOKEN` (bot refuses AI calls without it; falls back to legacy `OPENROUTER_API_KEY` if set)
+   **Recommended:** `AI_APIKEY` (bot refuses AI calls without it. Legacy `OPENROUTER_API_KEY` is no longer honored — rename it to `AI_APIKEY` when migrating.)
    **Optional:** `MONGODB_URI` (snapshot/undo + context persistence disabled if missing)
    **Optional tuning:**
    - `LOG_LEVEL=DEBUG|INFO|WARN|ERROR` (default `INFO`)
@@ -187,7 +187,7 @@ Test coverage:
 - `tests/logger.test.js` — structured logging, level filtering, secret redaction
 - `tests/cooldown.test.js` — per-user cooldowns, action-specific cooldowns, cleanup
 - `tests/metrics.test.js` — request/action tracking, failure rate math
-- `tests/envValidator.test.js` — startup env validation, placeholder rejection, AI_TOKEN/OPENROUTER_API_KEY dual support
+- `tests/envValidator.test.js` — startup env validation, placeholder rejection, AI_APIKEY single-canonical credential (legacy OPENROUTER_API_KEY rejected)
 - `tests/aiHandler.test.js` — JSON parsing across all response shapes, retry classification
 - `tests/contextManager.test.js` — multi-turn context, eviction, ownership check
 - `tests/dynamicExecutor.test.js` — name sanitization, code validation (syntax + forbidden patterns), save/register/execute lifecycle, hot-reload, cache hits

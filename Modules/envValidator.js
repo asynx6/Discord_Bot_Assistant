@@ -7,22 +7,23 @@ dotenv.config();
  * Fails fast with a clear, actionable error message if anything is missing.
  *
  * Required: TOKEN_BOT, DISCORD_OWNER_ID
- * Optional but recommended: AI_TOKEN (or legacy OPENROUTER_API_KEY)
+ * Optional but recommended: AI_APIKEY (single canonical AI credential)
  * Optional: MONGODB_URI (snapshot/undo disabled if absent)
  *
  * v1.4.0 — Unified AI configuration:
- *   AI_TOKEN    — preferred API key (any OpenAI-compatible provider)
- *   AI_BASE_URL — provider base URL (default: https://openrouter.ai/api/v1)
- *   AI_MODEL    — model identifier (default: openai/gpt-4o-mini)
- *   Backward compatibility: if AI_TOKEN is missing but OPENROUTER_API_KEY
- *   is set, the legacy key is used and a soft warning is logged.
+ *   AI_APIKEY    — any OpenAI-compatible API key (OpenRouter, DeepSeek, OpenAI, etc.)
+ *   AI_BASE_URL  — provider base URL (default: https://openrouter.ai/api/v1)
+ *   AI_MODEL     — primary model identifier (default: openai/gpt-4o-mini)
+ *   AI_FALLBACK_MODEL — fallback after retries (default: openai/gpt-3.5-turbo)
+ *
+ * Note: The legacy `OPENROUTER_API_KEY` variable is intentionally NOT honored.
+ * Migrate by renaming it to `AI_APIKEY` in your `.env` file.
  */
 
 const PLACEHOLDER_VALUES = new Set([
     "",
     "your_discord_bot_token",
-    "your_openrouter_api_key",
-    "your_ai_token",
+    "your_ai_apikey",
     "your_discord_id",
     "your_model_name",
     "your_base_url",
@@ -60,7 +61,7 @@ class EnvValidationError extends Error {
  *   aiToken: string|null,
  *   aiBaseUrl: string,
  *   aiModel: string,
- *   aiSource: 'env'|'legacy'|'missing',
+ *   aiFallbackModel: string,
  *   hasMongo: boolean,
  *   mongoUri: string|null
  * }}
@@ -74,27 +75,22 @@ export function validateEnv({ strict = false, requireAi = false } = {}) {
         missing.push("DISCORD_OWNER_ID (must be a valid snowflake ID, e.g. 123456789012345678)");
     }
 
-    // AI configuration — prefer new AI_TOKEN, fall back to legacy OPENROUTER_API_KEY
-    const aiToken = !isMissing("AI_TOKEN") ? process.env.AI_TOKEN : null;
-    const legacyAiKey = !isMissing("OPENROUTER_API_KEY") ? process.env.OPENROUTER_API_KEY : null;
-    const resolvedAiToken = aiToken || legacyAiKey;
-
-    let aiSource = "missing";
-    if (aiToken) aiSource = "env";
-    else if (legacyAiKey) aiSource = "legacy";
+    // AI configuration — single canonical credential is AI_APIKEY
+    const aiToken = !isMissing("AI_APIKEY") ? process.env.AI_APIKEY : null;
 
     const aiBaseUrl = process.env.AI_BASE_URL || "https://openrouter.ai/api/v1";
     const aiModel = process.env.AI_MODEL || "openai/gpt-4o-mini";
+    const aiFallbackModel = process.env.AI_FALLBACK_MODEL || "openai/gpt-3.5-turbo";
 
-    if (requireAi && !resolvedAiToken) {
-        missing.push("AI_TOKEN (or legacy OPENROUTER_API_KEY)");
+    if (requireAi && !aiToken) {
+        missing.push("AI_APIKEY");
     }
 
     const hasMongo = !isMissing("MONGODB_URI");
     const mongoUri = hasMongo ? process.env.MONGODB_URI : null;
 
-    if (strict && !resolvedAiToken) {
-        missing.push("AI_TOKEN (or legacy OPENROUTER_API_KEY)");
+    if (strict && !aiToken) {
+        missing.push("AI_APIKEY");
     }
 
     if (missing.length > 0) {
@@ -116,9 +112,10 @@ export function validateEnv({ strict = false, requireAi = false } = {}) {
             "  - DISCORD_OWNER_ID (your Discord user ID, snowflake format)",
             "",
             "Recommended (AI):",
-            "  - AI_TOKEN    (any OpenAI-compatible API key)",
-            "  - AI_BASE_URL (default: https://openrouter.ai/api/v1)",
-            "  - AI_MODEL    (default: openai/gpt-4o-mini)",
+            "  - AI_APIKEY        (any OpenAI-compatible API key)",
+            "  - AI_BASE_URL      (default: https://openrouter.ai/api/v1)",
+            "  - AI_MODEL         (default: openai/gpt-4o-mini)",
+            "  - AI_FALLBACK_MODEL (default: openai/gpt-3.5-turbo)",
             "",
             "Optional:",
             "  - MONGODB_URI (snapshot/undo + persistent context)",
@@ -130,11 +127,11 @@ export function validateEnv({ strict = false, requireAi = false } = {}) {
     return {
         token: process.env.TOKEN_BOT,
         ownerId: process.env.DISCORD_OWNER_ID,
-        hasAi: !!resolvedAiToken,
-        aiToken: resolvedAiToken,
+        hasAi: !!aiToken,
+        aiToken,
         aiBaseUrl,
         aiModel,
-        aiSource,
+        aiFallbackModel,
         hasMongo,
         mongoUri,
     };

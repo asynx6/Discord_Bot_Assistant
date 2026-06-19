@@ -21,7 +21,7 @@ test("rejects when TOKEN_BOT is missing", () => {
     const restore = setEnv({
         TOKEN_BOT: undefined,
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {
@@ -35,7 +35,7 @@ test("rejects when DISCORD_OWNER_ID is missing", () => {
     const restore = setEnv({
         TOKEN_BOT: "tok",
         DISCORD_OWNER_ID: undefined,
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {
@@ -49,7 +49,7 @@ test("rejects when DISCORD_OWNER_ID is not a valid snowflake", () => {
     const restore = setEnv({
         TOKEN_BOT: "tok",
         DISCORD_OWNER_ID: "not-a-snowflake",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {
@@ -63,7 +63,7 @@ test("rejects placeholder values", () => {
     const restore = setEnv({
         TOKEN_BOT: "your_discord_bot_token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {
@@ -77,8 +77,7 @@ test("passes with minimum required vars", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: undefined,
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: undefined,
         MONGODB_URI: undefined,
     });
     try {
@@ -92,54 +91,37 @@ test("passes with minimum required vars", () => {
     }
 });
 
-test("reports hasAi=true when AI_TOKEN present", () => {
+test("reports hasAi=true when AI_APIKEY present", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "sk-xyz",
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: "sk-xyz",
         MONGODB_URI: undefined,
     });
     try {
         const result = validateEnv();
         assert.equal(result.hasAi, true);
-        assert.equal(result.aiSource, "env");
+        assert.equal(result.aiToken, "sk-xyz");
     } finally {
         restore();
     }
 });
 
-test("falls back to legacy OPENROUTER_API_KEY when AI_TOKEN missing", () => {
+test("does NOT honor legacy OPENROUTER_API_KEY", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: undefined,
-        OPENROUTER_API_KEY: "sk-or-xyz",
+        AI_APIKEY: undefined,
         MONGODB_URI: undefined,
     });
+    // Simulate a stale .env that still carries the old variable
+    process.env.OPENROUTER_API_KEY = "sk-or-stale";
     try {
         const result = validateEnv();
-        assert.equal(result.hasAi, true);
-        assert.equal(result.aiSource, "legacy");
-        assert.equal(result.aiToken, "sk-or-xyz");
+        assert.equal(result.hasAi, false);
+        assert.equal(result.aiToken, null);
     } finally {
-        restore();
-    }
-});
-
-test("AI_TOKEN takes precedence over OPENROUTER_API_KEY", () => {
-    const restore = setEnv({
-        TOKEN_BOT: "real-token",
-        DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "new-token",
-        OPENROUTER_API_KEY: "legacy-token",
-        MONGODB_URI: undefined,
-    });
-    try {
-        const result = validateEnv();
-        assert.equal(result.aiToken, "new-token");
-        assert.equal(result.aiSource, "env");
-    } finally {
+        delete process.env.OPENROUTER_API_KEY;
         restore();
     }
 });
@@ -148,7 +130,7 @@ test("defaults AI_BASE_URL to OpenRouter when not set", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         AI_BASE_URL: undefined,
         MONGODB_URI: undefined,
     });
@@ -164,7 +146,7 @@ test("respects custom AI_BASE_URL", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         AI_BASE_URL: "https://api.deepseek.com/v1",
         MONGODB_URI: undefined,
     });
@@ -180,7 +162,7 @@ test("defaults AI_MODEL to gpt-4o-mini when not set", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         AI_MODEL: undefined,
         MONGODB_URI: undefined,
     });
@@ -196,7 +178,7 @@ test("respects custom AI_MODEL", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         AI_MODEL: "google/gemini-2.0-flash-exp",
         MONGODB_URI: undefined,
     });
@@ -208,12 +190,27 @@ test("respects custom AI_MODEL", () => {
     }
 });
 
-test("treats AI_TOKEN placeholder as missing", () => {
+test("defaults AI_FALLBACK_MODEL to gpt-3.5-turbo when not set", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "your_ai_token",
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: "k",
+        AI_FALLBACK_MODEL: undefined,
+        MONGODB_URI: undefined,
+    });
+    try {
+        const result = validateEnv();
+        assert.equal(result.aiFallbackModel, "openai/gpt-3.5-turbo");
+    } finally {
+        restore();
+    }
+});
+
+test("treats AI_APIKEY placeholder as missing", () => {
+    const restore = setEnv({
+        TOKEN_BOT: "real-token",
+        DISCORD_OWNER_ID: "123456789012345678",
+        AI_APIKEY: "your_ai_apikey",
         MONGODB_URI: undefined,
     });
     try {
@@ -224,12 +221,11 @@ test("treats AI_TOKEN placeholder as missing", () => {
     }
 });
 
-test("strict mode requires AI key", () => {
+test("strict mode requires AI_APIKEY", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: undefined,
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: undefined,
         MONGODB_URI: undefined,
     });
     try {
@@ -239,12 +235,11 @@ test("strict mode requires AI key", () => {
     }
 });
 
-test("requireAi option requires AI key", () => {
+test("requireAi option requires AI_APIKEY", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: undefined,
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: undefined,
         MONGODB_URI: undefined,
     });
     try {
@@ -254,11 +249,11 @@ test("requireAi option requires AI key", () => {
     }
 });
 
-test("requireAi passes when AI_TOKEN present", () => {
+test("requireAi passes when AI_APIKEY present", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {
@@ -273,7 +268,7 @@ test("reports hasMongo=true when URI present", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "123456789012345678",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: "mongodb+srv://u:p@host/db",
     });
     try {
@@ -289,8 +284,7 @@ test("error carries the missing keys list", () => {
     const restore = setEnv({
         TOKEN_BOT: undefined,
         DISCORD_OWNER_ID: undefined,
-        AI_TOKEN: undefined,
-        OPENROUTER_API_KEY: undefined,
+        AI_APIKEY: undefined,
         MONGODB_URI: undefined,
     });
     try {
@@ -312,7 +306,7 @@ test("snowflake format is enforced (length range 17-20)", () => {
     const restore = setEnv({
         TOKEN_BOT: "real-token",
         DISCORD_OWNER_ID: "12345",
-        AI_TOKEN: "k",
+        AI_APIKEY: "k",
         MONGODB_URI: undefined,
     });
     try {

@@ -8,32 +8,30 @@ dotenv.config();
 let openaiClient = null;
 
 /**
- * Resolve AI configuration from environment with backward compatibility.
- * - AI_TOKEN preferred; falls back to OPENROUTER_API_KEY.
+ * Resolve AI configuration from environment.
+ * - AI_APIKEY is the single canonical credential (any OpenAI-compatible provider).
  * - AI_BASE_URL defaults to OpenRouter.
  * - AI_MODEL defaults to gpt-4o-mini.
  */
 function resolveAiConfig() {
     const token =
-        (process.env.AI_TOKEN && process.env.AI_TOKEN.trim() && process.env.AI_TOKEN !== "your_ai_token"
-            ? process.env.AI_TOKEN
-            : null) ||
-        (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim() && process.env.OPENROUTER_API_KEY !== "your_openrouter_api_key"
-            ? process.env.OPENROUTER_API_KEY
-            : null);
+        process.env.AI_APIKEY &&
+        process.env.AI_APIKEY.trim() &&
+        process.env.AI_APIKEY !== "your_ai_apikey"
+            ? process.env.AI_APIKEY
+            : null;
 
     const baseUrl = process.env.AI_BASE_URL || "https://openrouter.ai/api/v1";
     const model = process.env.AI_MODEL || "openai/gpt-4o-mini";
     const fallbackModel = process.env.AI_FALLBACK_MODEL || "openai/gpt-3.5-turbo";
-    const source = process.env.AI_TOKEN ? "env" : process.env.OPENROUTER_API_KEY ? "legacy" : "missing";
 
-    return { token, baseUrl, model, fallbackModel, source };
+    return { token, baseUrl, model, fallbackModel };
 }
 
 function getClient() {
     if (openaiClient) return openaiClient;
 
-    const { token, baseUrl, source } = resolveAiConfig();
+    const { token, baseUrl } = resolveAiConfig();
     if (!token) {
         return null;
     }
@@ -49,11 +47,6 @@ function getClient() {
         apiKey: token,
         defaultHeaders,
     });
-    if (source === "legacy") {
-        logger.warn("ai.legacy_env_used", {
-            note: "OPENROUTER_API_KEY is deprecated, prefer AI_TOKEN",
-        });
-    }
     return openaiClient;
 }
 
@@ -214,7 +207,7 @@ export async function getAiInstruction(userInput, imageUrls = []) {
     const client = getClient();
     if (!client) {
         logger.error("ai.no_api_key");
-        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env. Fitur AI nonaktif." };
+        return { isError: true, message: "AI_APIKEY belum diisi di .env. Fitur AI nonaktif." };
     }
 
     let lastError = null;
@@ -301,7 +294,7 @@ export async function getAiInstruction(userInput, imageUrls = []) {
 export async function generateDynamicCode(suggestedName, intent, originalQuery) {
     const client = getClient();
     if (!client) {
-        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env." };
+        return { isError: true, message: "AI_APIKEY belum diisi di .env." };
     }
 
     const userPrompt = [
@@ -381,7 +374,7 @@ export async function generateDynamicCode(suggestedName, intent, originalQuery) 
 export async function regenerateWithErrorContext(suggestedName, intent, originalQuery, previousCode, errorMessage, attempt = 1) {
     const client = getClient();
     if (!client) {
-        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env." };
+        return { isError: true, message: "AI_APIKEY belum diisi di .env." };
     }
 
     const userPrompt = [

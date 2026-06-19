@@ -35,14 +35,14 @@ test("logger redacts sensitive keys", () => {
     };
 
     try {
-        logger.info("auth", { token: "secret-xyz", openrouter_api_key: "key-abc", user: "beni" });
+        logger.info("auth", { token: "secret-xyz", ai_apikey: "key-abc", user: "beni" });
     } finally {
         process.stdout.write = original;
     }
 
     const parsed = JSON.parse(captured.trim());
     assert.equal(parsed.token, "[REDACTED]");
-    assert.equal(parsed.openrouter_api_key, "[REDACTED]");
+    assert.equal(parsed.ai_apikey, "[REDACTED]");
     assert.equal(parsed.user, "beni");
 });
 
