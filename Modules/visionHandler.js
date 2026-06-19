@@ -1,76 +1,26 @@
 import { logger } from "./logger.js";
 
 /**
- * Vision Capability Registry
- * --------------------------
- * Centralizes which LLM models on OpenRouter support image/vision input.
- * Used by the message handler to short-circuit image requests before they
- * hit the API with a model that would either reject them or hallucinate.
+ * Vision Support — Provider-Driven Detection
+ * -------------------------------------------
+ * The bot does NOT pre-check whether a model supports image input via a
+ * hardcoded allow/deny list. Instead, it sends the request with images to the
+ * provider (9Router / OpenRouter) and listens for the provider's verdict:
  *
- * Pattern-based: easy to extend without code changes elsewhere.
+ *   - 200 OK    → model processed the image, return result.
+ *   - 400/422   → model rejected the image. We inspect the error message for
+ *                 vision-related keywords ("image", "vision", "multimodal",
+ *                 "does not support"). If matched, we transparently retry the
+ *                 same user request as a text-only chat and prepend a friendly
+ *                 Indonesian notice.
+ *   - Other     → bubble up as a generic AI error.
+ *
+ * Why this approach:
+ *   - Zero maintenance: no need to keep a list of which model supports what.
+ *   - New model?  Just flip ACTIVE_MODEL and it just works.
+ *   - Provider is the single source of truth for capability.
  */
 
-const VISION_PATTERNS = [
-    /^gemini-/i,
-    /^gemini\.ai/i,
-    /^google\/gemini/i,
-    /^gpt-4o/i,
-    /^gpt-4-turbo/i,
-    /^gpt-4-vision/i,
-    /^openai\/gpt-4o/i,
-    /^claude-3/i,
-    /^claude-3\.5/i,
-    /^anthropic\/claude-3/i,
-    /^minimax\//i,
-    /^minimax-/i,
-    /^llama-3\.2-vision/i,
-    /^llava/i,
-    /vision/i,
-    /multimodal/i,
-];
-
-const NON_VISION_PATTERNS = [
-    /^deepseek/i,
-    /^kimi/i,
-    /^text-/i,
-    /^gpt-3\.5/i,
-    /^gpt-3/i,
-    /^babbage/i,
-    /^davinci/i,
-    /^ada/i,
-    /^curie/i,
-    /^embedding/i,
-];
-
-/**
- * Check whether a model identifier supports vision/image input.
- *
- * @param {string} modelName - The model identifier (e.g. "openai/gpt-4o-mini").
- * @returns {boolean} True if model is known to accept images.
- */
-export function supportsVision(modelName) {
-    if (!modelName || typeof modelName !== "string") return false;
-    if (NON_VISION_PATTERNS.some((p) => p.test(modelName))) return false;
-    return VISION_PATTERNS.some((p) => p.test(modelName));
-}
-
-/**
- * Return the model name as-is if it supports vision, otherwise return the
- * preferred fallback (defaulting to a known vision-capable model).
- *
- * @param {string} currentModel
- * @param {string} [fallback] - Override fallback model.
- * @returns {{ model: string, switched: boolean }}
- */
-export function resolveVisionModel(currentModel, fallback = "google/gemini-2.0-flash-exp") {
-    if (supportsVision(currentModel)) {
-        return { model: currentModel, switched: false };
-    }
-    logger.warn("vision.model_unsupported", { currentModel, fallback });
-    return { model: fallback, switched: true };
-}
-
-// Allowed Discord image content types
 const ALLOWED_IMAGE_TYPES = new Set([
     "image/png",
     "image/jpeg",
@@ -127,20 +77,74 @@ export async function extractImageFromMessage(message) {
 }
 
 /**
- * Build a user-facing error when the active model does not support vision.
- * Returned message is in Indonesian (matches bot voice).
+ * Build a user-facing fallback notice when the active model does not support
+ * vision. The Indonesian message explains that the model can't see the image
+ * and the request will continue as text-only.
  *
  * @param {string} modelName
  * @returns {string}
  */
 export function visionUnsupportedMessage(modelName) {
     const displayName = String(modelName || "unknown").replace(/^.*\//, "");
-    return `Maaf, model AI saya saat ini (**${displayName}**) tidak mendukung fitur Vision/Image. ` +
-        `Coba pakai model yang support vision seperti gemini-2.0-flash, gpt-4o-mini, atau claude-3-haiku.`;
+    return (
+        `⚠️ Model AI saya saat ini (**${displayName}**) **tidak mendukung** fitur Vision/Image, ` +
+        `jadi gw nggak bisa liat gambar yang lu kirim.\n\n` +
+        `Tapi tenang, request teks lu bakal gw proses normal kok. ` +
+        `Kalo mau fitur vision aktif, ganti \`ACTIVE_MODEL\` di \`.env\` ke model yang support image ` +
+        `(contoh: \`openai/gpt-4o-mini\`, \`google/gemini-2.0-flash-exp\`, \`anthropic/claude-3-haiku\`).`
+    );
+}
+
+// Tokens in error messages that strongly indicate the provider rejected the
+// request because of an unsupported image/vision input. Matched case-insensitively.
+// We are deliberately conservative — only flag a 4xx-class error as a vision
+// rejection when at least one of these tokens appears in the body. This avoids
+// false positives (e.g. a generic "Bad Request" with no mention of images).
+const VISION_ERROR_TOKENS = [
+    "image",
+    "vision",
+    "multimodal",
+    "visual input",
+    "image input",
+    "image_url",
+    "does not support image",
+    "doesn't support image",
+    "not support image",
+    "no image support",
+    "unsupported media",
+];
+
+/**
+ * Inspect a thrown error from the LLM client and decide whether it means the
+ * active model does not support image input.
+ *
+ * Heuristic — must satisfy ALL of:
+ *   1. Status code is 400 (Bad Request) or 422 (Unprocessable Entity) — these
+ *      are the codes providers use to reject unsupported content shapes.
+ *   2. Error message body contains at least one of VISION_ERROR_TOKENS.
+ *
+ * @param {unknown} err
+ * @returns {boolean}
+ */
+export function isVisionUnsupportedError(err) {
+    if (!err) return false;
+
+    const status = err?.status ?? err?.response?.status ?? err?.response?.statusCode;
+    if (status !== 400 && status !== 422) return false;
+
+    const body = String(
+        err?.error?.message ??
+        err?.response?.data?.error?.message ??
+        err?.message ??
+        ""
+    ).toLowerCase();
+
+    if (!body) return false;
+
+    return VISION_ERROR_TOKENS.some((tok) => body.includes(tok));
 }
 
 export const _internal = {
-    VISION_PATTERNS,
-    NON_VISION_PATTERNS,
     ALLOWED_IMAGE_TYPES,
+    VISION_ERROR_TOKENS,
 };

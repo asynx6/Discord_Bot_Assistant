@@ -3,9 +3,8 @@ import path from "node:path";
 import { getAiInstruction, generateDynamicCode, regenerateWithErrorContext } from "./Modules/aiHandler.js";
 import {
     extractImageFromMessage,
-    supportsVision,
     visionUnsupportedMessage,
-    resolveVisionModel,
+    isVisionUnsupportedError,
 } from "./Modules/visionHandler.js";
 import { executeAiAction } from "./Modules/discordActions.js";
 import { saveContext, getContext, clearAllContext } from "./Modules/contextManager.js";
@@ -327,13 +326,14 @@ client.on("messageCreate", async (message) => {
             }
         }
 
-        // Vision detection — extract image URLs from attachments or reply references
+        // Vision: try sending with image first. If the provider rejects because
+        // the active model doesn't support images, transparently retry as
+        // text-only and prepend a friendly notice to the AI explanation.
+        // We deliberately do NOT pre-check model capabilities here — the
+        // provider is the single source of truth. New models "just work".
         const imageUrls = await extractImageFromMessage(message);
+        const currentModel = process.env.ACTIVE_MODEL || "openai/gpt-4o-mini";
         if (imageUrls.length > 0) {
-            const currentModel = process.env.ACTIVE_MODEL || "openai/gpt-4o-mini";
-            if (!supportsVision(currentModel)) {
-                return message.reply(visionUnsupportedMessage(currentModel));
-            }
             logger.info("vision.images_detected", { count: imageUrls.length, model: currentModel });
         }
 
@@ -358,7 +358,38 @@ client.on("messageCreate", async (message) => {
             progressMsg = await message.reply(
                 "⏳ Sabar ya Bos, gue lagi mikir dan ngerjain request lu... Kalo banyak mintanya makin lama kelarnya. Pantengin terus!"
             );
-            instruction = await getAiInstruction(userInput);
+
+            // Attempt 1: send with images
+            let aiResult = await getAiInstruction(userInput, imageUrls);
+
+            // If the provider told us the model doesn't support images,
+            // silently retry as text-only and remember to notify the user.
+            let visionNotice = null;
+            if (aiResult.isError && isVisionUnsupportedError(aiResult.rawError)) {
+                logger.warn("vision.model_unsupported_fallback", {
+                    model: currentModel,
+                    error: aiResult.rawError?.message ?? String(aiResult.rawError),
+                });
+                visionNotice = visionUnsupportedMessage(currentModel);
+                if (progressMsg) {
+                    await progressMsg
+                        .edit("⚠️ Model nggak support image, fallback ke text-only...")
+                        .catch(() => {});
+                }
+                aiResult = await getAiInstruction(userInput, []);
+            }
+
+            // If we fell back, prepend the vision notice to the AI's explanation
+            // so the user understands why the picture wasn't described.
+            if (visionNotice && !aiResult.isError) {
+                const originalExplanation = aiResult.aiExplanation ?? "";
+                aiResult = {
+                    ...aiResult,
+                    aiExplanation: `${visionNotice}\n\n${originalExplanation}`,
+                };
+            }
+
+            instruction = aiResult;
         } catch (err) {
             processingLock.delete(message.guild.id);
             logger.error("ai.call.threw", { error: err?.message });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { _internal } from "../Modules/aiHandler.js";
+import { _internal, buildUserContent } from "../Modules/aiHandler.js";
 
 const { extractActions, isRetryable } = _internal;
 
@@ -97,4 +97,61 @@ test("isRetryable: message containing 'rate limit' is retryable", () => {
 
 test("isRetryable: generic 'something broke' is NOT retryable", () => {
     assert.equal(isRetryable({ message: "something broke" }), false);
+});
+
+// ---------- buildUserContent ----------
+
+test("buildUserContent: text-only returns string as-is", () => {
+    assert.equal(buildUserContent("hello world", []), "hello world");
+    assert.equal(buildUserContent("hello world"), "hello world");
+});
+
+test("buildUserContent: text + images returns multimodal content array", () => {
+    const out = buildUserContent("describe this", ["https://x/a.png"]);
+    assert.ok(Array.isArray(out));
+    assert.equal(out.length, 2);
+    assert.deepEqual(out[0], { type: "text", text: "describe this" });
+    assert.deepEqual(out[1], { type: "image_url", image_url: { url: "https://x/a.png" } });
+});
+
+test("buildUserContent: handles multiple images", () => {
+    const urls = ["https://x/a.png", "https://x/b.jpg", "https://x/c.webp"];
+    const out = buildUserContent("compare these", urls);
+    assert.ok(Array.isArray(out));
+    assert.equal(out.length, 4); // 1 text + 3 images
+    assert.equal(out[0].type, "text");
+    for (let i = 1; i < 4; i++) {
+        assert.equal(out[i].type, "image_url");
+        assert.equal(out[i].image_url.url, urls[i - 1]);
+    }
+});
+
+test("buildUserContent: empty text + images → images only", () => {
+    const out = buildUserContent("", ["https://x/a.png"]);
+    assert.ok(Array.isArray(out));
+    assert.equal(out.length, 1);
+    assert.equal(out[0].type, "image_url");
+});
+
+test("buildUserContent: text + no images → returns string", () => {
+    assert.equal(buildUserContent("hello", null), "hello");
+    assert.equal(buildUserContent("hello", undefined), "hello");
+});
+
+test("buildUserContent: filters invalid (non-string) image URLs", () => {
+    const out = buildUserContent("hi", ["https://x/a.png", null, undefined, "", 42, "https://x/b.jpg"]);
+    assert.ok(Array.isArray(out));
+    // Only 2 valid URLs survive
+    assert.equal(out.length, 3); // 1 text + 2 images
+    assert.equal(out[1].image_url.url, "https://x/a.png");
+    assert.equal(out[2].image_url.url, "https://x/b.jpg");
+});
+
+test("buildUserContent: handles null/undefined userInput gracefully", () => {
+    assert.equal(buildUserContent(null, []), "");
+    assert.equal(buildUserContent(undefined, []), "");
+});
+
+test("buildUserContent: text-only when imageUrls is empty array", () => {
+    assert.equal(buildUserContent("just text", []), "just text");
 });

@@ -1,61 +1,76 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    supportsVision,
-    resolveVisionModel,
+    isVisionUnsupportedError,
     visionUnsupportedMessage,
     extractImageFromMessage,
 } from "../Modules/visionHandler.js";
 
-// ---------- supportsVision ----------
+// ---------- isVisionUnsupportedError ----------
+// Provider-driven detection: no hardcoded model allow/deny lists. We just look
+// at the error's HTTP status (must be 400 or 422) and search the body for
+// image/vision/multimodal keywords.
 
-test("supportsVision: true for known vision models", () => {
-    assert.equal(supportsVision("openai/gpt-4o-mini"), true);
-    assert.equal(supportsVision("gpt-4o"), true);
-    assert.equal(supportsVision("gpt-4-turbo"), true);
-    assert.equal(supportsVision("gpt-4-vision-preview"), true);
-    assert.equal(supportsVision("google/gemini-2.0-flash-exp"), true);
-    assert.equal(supportsVision("gemini-1.5-pro"), true);
-    assert.equal(supportsVision("anthropic/claude-3-haiku"), true);
-    assert.equal(supportsVision("claude-3.5-sonnet"), true);
-    assert.equal(supportsVision("minimax/MiniMax-M3"), true);
-    assert.equal(supportsVision("llama-3.2-vision"), true);
+test("isVisionUnsupportedError: matches 400 with 'image' in message", () => {
+    const err = { status: 400, message: "Provider rejected: image input not allowed" };
+    assert.equal(isVisionUnsupportedError(err), true);
 });
 
-test("supportsVision: false for known non-vision models", () => {
-    assert.equal(supportsVision("deepseek-chat"), false);
-    assert.equal(supportsVision("deepseek/deepseek-chat"), false);
-    assert.equal(supportsVision("kimi-k2"), false);
-    assert.equal(supportsVision("moonshot/kimi"), false);
-    assert.equal(supportsVision("openai/gpt-3.5-turbo"), false);
-    assert.equal(supportsVision("text-embedding-ada-002"), false);
+test("isVisionUnsupportedError: matches 422 with 'vision' in message", () => {
+    const err = { status: 422, message: "Model does not support vision" };
+    assert.equal(isVisionUnsupportedError(err), true);
 });
 
-test("supportsVision: false for null/empty/undefined", () => {
-    assert.equal(supportsVision(null), false);
-    assert.equal(supportsVision(undefined), false);
-    assert.equal(supportsVision(""), false);
-    assert.equal(supportsVision(42), false);
+test("isVisionUnsupportedError: matches 'multimodal' in nested error body", () => {
+    const err = {
+        status: 400,
+        error: { message: "Multimodal content not supported by this model" },
+    };
+    assert.equal(isVisionUnsupportedError(err), true);
 });
 
-// ---------- resolveVisionModel ----------
-
-test("resolveVisionModel: returns current model when vision-capable", () => {
-    const r = resolveVisionModel("gpt-4o-mini");
-    assert.equal(r.model, "gpt-4o-mini");
-    assert.equal(r.switched, false);
+test("isVisionUnsupportedError: matches via response.data.error.message", () => {
+    const err = {
+        response: { status: 400, data: { error: { message: "image_url not allowed" } } },
+    };
+    assert.equal(isVisionUnsupportedError(err), true);
 });
 
-test("resolveVisionModel: switches to fallback for non-vision model", () => {
-    const r = resolveVisionModel("deepseek-chat");
-    assert.equal(r.switched, true);
-    assert.match(r.model, /gemini|gpt-4o|claude-3/i);
+test("isVisionUnsupportedError: does not match generic 400 (no vision tokens)", () => {
+    const err = { status: 400, message: "Invalid API key" };
+    assert.equal(isVisionUnsupportedError(err), false);
 });
 
-test("resolveVisionModel: honors custom fallback", () => {
-    const r = resolveVisionModel("kimi", "gpt-4o");
-    assert.equal(r.model, "gpt-4o");
-    assert.equal(r.switched, true);
+test("isVisionUnsupportedError: does not match 500 (wrong status code)", () => {
+    const err = { status: 500, message: "image processing failed" };
+    assert.equal(isVisionUnsupportedError(err), false);
+});
+
+test("isVisionUnsupportedError: does not match 429 (rate limit, not vision)", () => {
+    const err = { status: 429, message: "Rate limit exceeded" };
+    assert.equal(isVisionUnsupportedError(err), false);
+});
+
+test("isVisionUnsupportedError: case-insensitive matching", () => {
+    const err = { status: 400, message: "IMAGE INPUT not supported" };
+    assert.equal(isVisionUnsupportedError(err), true);
+});
+
+test("isVisionUnsupportedError: handles null / undefined / non-object", () => {
+    assert.equal(isVisionUnsupportedError(null), false);
+    assert.equal(isVisionUnsupportedError(undefined), false);
+    assert.equal(isVisionUnsupportedError("string"), false);
+    assert.equal(isVisionUnsupportedError(42), false);
+});
+
+test("isVisionUnsupportedError: handles empty error message", () => {
+    const err = { status: 400, message: "" };
+    assert.equal(isVisionUnsupportedError(err), false);
+});
+
+test("isVisionUnsupportedError: matches 'does not support image' variant", () => {
+    const err = { status: 400, message: "Model 'deepseek-chat' does not support image input" };
+    assert.equal(isVisionUnsupportedError(err), true);
 });
 
 // ---------- visionUnsupportedMessage ----------
@@ -66,15 +81,23 @@ test("visionUnsupportedMessage: includes model name", () => {
     assert.match(msg, /Vision|Image/i);
 });
 
-test("visionUnsupportedMessage: strips path prefix", () => {
+test("visionUnsupportedMessage: strips path prefix from primary model name", () => {
     const msg = visionUnsupportedMessage("openai/gpt-3.5-turbo");
-    assert.match(msg, /gpt-3\.5-turbo/);
-    assert.doesNotMatch(msg, /openai\//);
+    // Primary model display name should be stripped of "openai/" prefix
+    assert.match(msg, /\*\*gpt-3\.5-turbo\*\*/);
+    // The model name must not start with "openai/" in the bolded display
+    assert.doesNotMatch(msg, /\*\*openai\//);
 });
 
 test("visionUnsupportedMessage: handles null/undefined", () => {
     const msg = visionUnsupportedMessage(null);
     assert.match(msg, /unknown/);
+});
+
+test("visionUnsupportedMessage: mentions fallback to text-only", () => {
+    const msg = visionUnsupportedMessage("kimi");
+    // Should reassure user that the text request will still be processed.
+    assert.match(msg, /tetap|normal|text|teks|proses/i);
 });
 
 // ---------- extractImageFromMessage ----------

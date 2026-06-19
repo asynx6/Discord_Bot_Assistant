@@ -34,10 +34,10 @@ Built with the **ASYNX6** architecture and powered by LLMs (e.g., GPT-4o-mini vi
 
 ### New in v1.3.0 — Self-Healing, Vision & File Utilities 🩺
 - **📸 Smart Vision Detection** — Bot reads image attachments from Discord in two ways: (A) user uploads image + tags bot, (B) user replies to an image + tags bot. Both direct attachments and reply references are scanned.
-- **🛡️ Model Vision Validation** — Before sending images to the API, the bot checks whether the active model supports vision. Non-vision models like `deepseek-chat`, `kimi`, `gpt-3.5-turbo` are short-circuited with a clear Indonesian error: *"Maaf, model AI saya saat ini ([Nama_Model]) tidak mendukung fitur Vision/Image."*
+- **🔄 Provider-Driven Vision Validation** — The bot **does not maintain a hardcoded allow/deny list of vision-capable models**. Instead, it just sends the request (with images) to the provider (9Router / OpenRouter). If the active model can't process images, the provider returns a 400/422 with an "image"/"vision"/"multimodal" error → the bot **transparently retries as text-only** and prepends a friendly Indonesian notice ("Model saya saat ini tidak mendukung Vision/Image, tapi tenang, request teks lu bakal gw proses normal kok"). New model? Just flip `ACTIVE_MODEL` and it just works.
 - **🩹 Self-Healing Dynamic Commands** — When a generated handler crashes at runtime, the bot auto-captures the error, sends it back to the AI, regenerates a fixed version, validates, re-saves (overwrite), re-registers, and re-executes — up to 3 attempts.
 - **📂 Enhanced Local File Viewer** — `list dynamic` (or "lihat file yang udah kamu buat") now reports file size, creation date, load status, and an extracted summary (JSDoc, // comment, or first meaningful line) for every generated command.
-- **🧪 113 Unit Tests** — Up from 84 in v1.2.0. Vision, self-healing, and file metadata paths are fully covered.
+- **🧪 127 Unit Tests** — Up from 113 in v1.2.0. New: provider-error detection (`isVisionUnsupportedError`) and multimodal content builder (`buildUserContent`).
 
 ### New in v1.2.0 — Dynamic Autonomous Learning 🧬
 - **🧩 Self-Extending Commands** — Bot can generate, validate, save, and hot-reload new commands on the fly. Ask for a feature that doesn't exist; the bot creates it.

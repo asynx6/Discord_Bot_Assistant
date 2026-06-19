@@ -104,7 +104,7 @@ function isRetryable(err) {
 }
 
 // Internal — exported for unit tests
-export const _internal = { extractActions, isRetryable };
+export const _internal = { extractActions, isRetryable, buildUserContent };
 
 /**
  * Extract action array from whatever shape the LLM returns.
@@ -130,18 +130,59 @@ function extractActions(result) {
     return [];
 }
 
-async function callLlmOnce(client, model, userInput) {
+/**
+ * Build the user-message content for an LLM call. Text-only requests stay as
+ * a plain string; vision requests become an array of content blocks following
+ * the OpenAI multimodal format (`text` + `image_url`).
+ *
+ * Kept as a pure function so it can be unit-tested without mocking the client.
+ *
+ * @param {string} userInput
+ * @param {string[]} [imageUrls]
+ * @returns {string | Array<{type: string, text?: string, image_url?: {url: string}}>}
+ */
+export function buildUserContent(userInput, imageUrls = []) {
+    const text = String(userInput ?? "").trim();
+    if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+        return text;
+    }
+    const blocks = [];
+    if (text) blocks.push({ type: "text", text });
+    for (const url of imageUrls) {
+        if (typeof url === "string" && url) {
+            blocks.push({ type: "image_url", image_url: { url } });
+        }
+    }
+    return blocks;
+}
+
+async function callLlmOnce(client, model, userInput, imageUrls = []) {
+    const content = buildUserContent(userInput, imageUrls);
     return client.chat.completions.create({
         model,
         messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: userInput },
+            { role: "user", content },
         ],
         response_format: { type: "json_object" },
     });
 }
 
-export async function getAiInstruction(userInput) {
+/**
+ * Get the next AI instruction for a user request.
+ *
+ * If `imageUrls` is non-empty, the message is sent as multimodal content
+ * (text + image_url blocks). The provider may reject the request if the
+ * active model does not support images — in that case the raw error is
+ * attached to the response under `rawError` so the caller can detect
+ * vision-unsupported errors via `isVisionUnsupportedError` and fall back
+ * to a text-only retry.
+ *
+ * @param {string} userInput
+ * @param {string[]} [imageUrls]
+ * @returns {Promise<{isError: boolean, rawError?: unknown, message?: string, [k: string]: any}>}
+ */
+export async function getAiInstruction(userInput, imageUrls = []) {
     const client = getClient();
     if (!client) {
         logger.error("ai.no_api_key");
@@ -154,8 +195,8 @@ export async function getAiInstruction(userInput) {
         const model = attempt === MAX_RETRIES ? FALLBACK_MODEL : PRIMARY_MODEL;
 
         try {
-            logger.debug("ai.call.attempt", { attempt, model });
-            const completion = await callLlmOnce(client, model, userInput);
+            logger.debug("ai.call.attempt", { attempt, model, hasImages: imageUrls.length > 0 });
+            const completion = await callLlmOnce(client, model, userInput, imageUrls);
 
             const content = completion.choices?.[0]?.message?.content;
             if (!content) {
@@ -194,13 +235,14 @@ export async function getAiInstruction(userInput) {
                 finalResult[idx] = item;
             });
 
-            logger.info("ai.call.success", { attempt, model, actionCount: actions.length });
+            logger.info("ai.call.success", { attempt, model, actionCount: actions.length, hasImages: imageUrls.length > 0 });
             return { isError: false, ...finalResult };
         } catch (err) {
             lastError = err;
             logger.warn("ai.call.failed", {
                 attempt,
                 model,
+                hasImages: imageUrls.length > 0,
                 error: err?.message ?? String(err),
             });
 
@@ -211,9 +253,10 @@ export async function getAiInstruction(userInput) {
         }
     }
 
-    logger.error("ai.call.exhausted", { error: lastError?.message });
+    logger.error("ai.call.exhausted", { error: lastError?.message, hasImages: imageUrls.length > 0 });
     return {
         isError: true,
+        rawError: lastError,
         message: `Gagal kontak otak AI setelah ${MAX_RETRIES} percobaan: ${lastError?.message ?? "unknown error"}`,
     };
 }
