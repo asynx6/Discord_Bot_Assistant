@@ -1,7 +1,7 @@
 {
   "name": "asisten-ai",
-  "version": "1.3.0",
-  "description": "AI-powered Discord management bot with vision, self-healing dynamic commands, and file utilities",
+  "version": "1.4.0",
+  "description": "AI-powered Discord management bot with vision, self-healing, anti-phishing, system registry, and auto-diagnostic",
   "type": "module",
   "main": "index.js",
   "engines": {

@@ -5,32 +5,60 @@ import { metrics } from "./metrics.js";
 
 dotenv.config();
 
-const PRIMARY_MODEL = "openai/gpt-4o-mini";
-const FALLBACK_MODEL = "openai/gpt-3.5-turbo";
-
-const MAX_RETRIES = 3;
-const BASE_RETRY_DELAY_MS = 800;
-
 let openaiClient = null;
+
+/**
+ * Resolve AI configuration from environment with backward compatibility.
+ * - AI_TOKEN preferred; falls back to OPENROUTER_API_KEY.
+ * - AI_BASE_URL defaults to OpenRouter.
+ * - AI_MODEL defaults to gpt-4o-mini.
+ */
+function resolveAiConfig() {
+    const token =
+        (process.env.AI_TOKEN && process.env.AI_TOKEN.trim() && process.env.AI_TOKEN !== "your_ai_token"
+            ? process.env.AI_TOKEN
+            : null) ||
+        (process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim() && process.env.OPENROUTER_API_KEY !== "your_openrouter_api_key"
+            ? process.env.OPENROUTER_API_KEY
+            : null);
+
+    const baseUrl = process.env.AI_BASE_URL || "https://openrouter.ai/api/v1";
+    const model = process.env.AI_MODEL || "openai/gpt-4o-mini";
+    const fallbackModel = process.env.AI_FALLBACK_MODEL || "openai/gpt-3.5-turbo";
+    const source = process.env.AI_TOKEN ? "env" : process.env.OPENROUTER_API_KEY ? "legacy" : "missing";
+
+    return { token, baseUrl, model, fallbackModel, source };
+}
 
 function getClient() {
     if (openaiClient) return openaiClient;
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey || apiKey === "your_openrouter_api_key") {
+    const { token, baseUrl, source } = resolveAiConfig();
+    if (!token) {
         return null;
     }
 
+    // Build default headers — some providers (e.g. OpenRouter) require attribution
+    const defaultHeaders = {
+        "HTTP-Referer": "https://github.com/asynx6/Discord_Bot_Asistent",
+        "X-Title": "Discord Bot Asistent",
+    };
+
     openaiClient = new OpenAI({
-        baseURL: "https://openrouter.ai/api/v1",
-        apiKey,
-        defaultHeaders: {
-            "HTTP-Referer": "https://github.com/asynx6/Discord_Bot_Asistent",
-            "X-Title": "Discord Bot Asistent",
-        },
+        baseURL: baseUrl,
+        apiKey: token,
+        defaultHeaders,
     });
+    if (source === "legacy") {
+        logger.warn("ai.legacy_env_used", {
+            note: "OPENROUTER_API_KEY is deprecated, prefer AI_TOKEN",
+        });
+    }
     return openaiClient;
 }
+
+const PRIMARY_MODEL = process.env.AI_MODEL || "openai/gpt-4o-mini";
+const FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || "openai/gpt-3.5-turbo";
 
 const systemPrompt = `JSON only. You are a High-Level Discord Agent.
 Actions: CREATE_CHANNEL, DELETE_CHANNEL, EDIT_CHANNEL, CLONE_CHANNEL, SET_TOPIC, CREATE_CATEGORY, DELETE_CATEGORY, EDIT_CATEGORY, CREATE_ROLE, DELETE_ROLE, EDIT_ROLE, ROLE_ALL(filterType:ADD|REMOVE), KICK, BAN, MUTE, UNMUTE, UNBAN, WARN, ADD_ROLE_MEMBER, REMOVE_ROLE_MEMBER, CHANGE_NICKNAME_MEMBER, MOVE_MEMBER, MOVE_ALL, DISCONNECT_MEMBER, VOICE_MUTE, VOICE_UNMUTE, VOICE_DEAFEN, VOICE_UNDEAFEN, CHANGE_SERVER_NAME, CLEAN_MESSAGE, LOCK_CHANNEL, UNLOCK_CHANNEL, SLOWMODE, SEND_MESSAGE, CREATE_INVITE, SERVER_INFO, USER_INFO, ANNOUNCE, HELP, ADD_EMOJI, DELETE_EMOJI, AUDIT_LOG, LIST_MEMBERS, UNDO, DYNAMIC_REQUEST.
@@ -104,7 +132,7 @@ function isRetryable(err) {
 }
 
 // Internal — exported for unit tests
-export const _internal = { extractActions, isRetryable, buildUserContent };
+export const _internal = { extractActions, isRetryable, buildUserContent, resolveAiConfig };
 
 /**
  * Extract action array from whatever shape the LLM returns.

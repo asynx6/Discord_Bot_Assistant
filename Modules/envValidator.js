@@ -7,15 +7,25 @@ dotenv.config();
  * Fails fast with a clear, actionable error message if anything is missing.
  *
  * Required: TOKEN_BOT, DISCORD_OWNER_ID
- * Optional but recommended: OPENROUTER_API_KEY (falls back gracefully)
+ * Optional but recommended: AI_TOKEN (or legacy OPENROUTER_API_KEY)
  * Optional: MONGODB_URI (snapshot/undo disabled if absent)
+ *
+ * v1.4.0 — Unified AI configuration:
+ *   AI_TOKEN    — preferred API key (any OpenAI-compatible provider)
+ *   AI_BASE_URL — provider base URL (default: https://openrouter.ai/api/v1)
+ *   AI_MODEL    — model identifier (default: openai/gpt-4o-mini)
+ *   Backward compatibility: if AI_TOKEN is missing but OPENROUTER_API_KEY
+ *   is set, the legacy key is used and a soft warning is logged.
  */
 
 const PLACEHOLDER_VALUES = new Set([
     "",
     "your_discord_bot_token",
     "your_openrouter_api_key",
+    "your_ai_token",
     "your_discord_id",
+    "your_model_name",
+    "your_base_url",
     "masukkan",
 ]);
 
@@ -38,7 +48,24 @@ class EnvValidationError extends Error {
     }
 }
 
-export function validateEnv({ strict = false } = {}) {
+/**
+ * Validate all environment variables. Returns a normalized config object
+ * the rest of the bot can use without further env reads.
+ *
+ * @param {{ strict?: boolean, requireAi?: boolean }} [options]
+ * @returns {{
+ *   token: string,
+ *   ownerId: string,
+ *   hasAi: boolean,
+ *   aiToken: string|null,
+ *   aiBaseUrl: string,
+ *   aiModel: string,
+ *   aiSource: 'env'|'legacy'|'missing',
+ *   hasMongo: boolean,
+ *   mongoUri: string|null
+ * }}
+ */
+export function validateEnv({ strict = false, requireAi = false } = {}) {
     const missing = [];
 
     if (isMissing("TOKEN_BOT")) missing.push("TOKEN_BOT");
@@ -47,11 +74,27 @@ export function validateEnv({ strict = false } = {}) {
         missing.push("DISCORD_OWNER_ID (must be a valid snowflake ID, e.g. 123456789012345678)");
     }
 
-    const hasOpenRouter = !isMissing("OPENROUTER_API_KEY");
-    const hasMongo = !isMissing("MONGODB_URI");
+    // AI configuration — prefer new AI_TOKEN, fall back to legacy OPENROUTER_API_KEY
+    const aiToken = !isMissing("AI_TOKEN") ? process.env.AI_TOKEN : null;
+    const legacyAiKey = !isMissing("OPENROUTER_API_KEY") ? process.env.OPENROUTER_API_KEY : null;
+    const resolvedAiToken = aiToken || legacyAiKey;
 
-    if (strict && !hasOpenRouter) {
-        missing.push("OPENROUTER_API_KEY");
+    let aiSource = "missing";
+    if (aiToken) aiSource = "env";
+    else if (legacyAiKey) aiSource = "legacy";
+
+    const aiBaseUrl = process.env.AI_BASE_URL || "https://openrouter.ai/api/v1";
+    const aiModel = process.env.AI_MODEL || "openai/gpt-4o-mini";
+
+    if (requireAi && !resolvedAiToken) {
+        missing.push("AI_TOKEN (or legacy OPENROUTER_API_KEY)");
+    }
+
+    const hasMongo = !isMissing("MONGODB_URI");
+    const mongoUri = hasMongo ? process.env.MONGODB_URI : null;
+
+    if (strict && !resolvedAiToken) {
+        missing.push("AI_TOKEN (or legacy OPENROUTER_API_KEY)");
     }
 
     if (missing.length > 0) {
@@ -72,9 +115,13 @@ export function validateEnv({ strict = false } = {}) {
             "  - TOKEN_BOT        (Discord bot token)",
             "  - DISCORD_OWNER_ID (your Discord user ID, snowflake format)",
             "",
-            "Recommended:",
-            "  - OPENROUTER_API_KEY (LLM provider key)",
-            "  - MONGODB_URI        (for snapshot/undo)",
+            "Recommended (AI):",
+            "  - AI_TOKEN    (any OpenAI-compatible API key)",
+            "  - AI_BASE_URL (default: https://openrouter.ai/api/v1)",
+            "  - AI_MODEL    (default: openai/gpt-4o-mini)",
+            "",
+            "Optional:",
+            "  - MONGODB_URI (snapshot/undo + persistent context)",
             "",
         ];
         throw new EnvValidationError(missing, lines.join("\n"));
@@ -83,8 +130,13 @@ export function validateEnv({ strict = false } = {}) {
     return {
         token: process.env.TOKEN_BOT,
         ownerId: process.env.DISCORD_OWNER_ID,
-        hasOpenRouter,
+        hasAi: !!resolvedAiToken,
+        aiToken: resolvedAiToken,
+        aiBaseUrl,
+        aiModel,
+        aiSource,
         hasMongo,
+        mongoUri,
     };
 }
 

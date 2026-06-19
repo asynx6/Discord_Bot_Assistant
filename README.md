@@ -39,6 +39,15 @@ Built with the **ASYNX6** architecture and powered by LLMs (e.g., GPT-4o-mini vi
 - **📂 Enhanced Local File Viewer** — `list dynamic` (or "lihat file yang udah kamu buat") now reports file size, creation date, load status, and an extracted summary (JSDoc, // comment, or first meaningful line) for every generated command.
 - **🧪 127 Unit Tests** — Up from 113 in v1.2.0. New: provider-error detection (`isVisionUnsupportedError`) and multimodal content builder (`buildUserContent`).
 
+### New in v1.4.0 — Super Agent, Anti-Phishing, Interactive UI & Auto-Diagnostic 🛡️
+- **🛡️ Real-Time Cross-Channel Anti-Phishing System** — Every incoming message is fingerprinted (normalized text + URL hash + per-image hash). If a user posts the *same composite hash* across **> 3 different channels** within a **2-second sliding window**, the bot immediately deletes the message from every tracked channel, locks the user for 60 seconds, and emits a `security.phishing.detected` log line. Zero AI involvement in the hot path — the decision is deterministic and O(1) per message.
+- **🎛️ Unified AI Configuration via `.env`** — All AI provider settings now live in `.env` under `AI_TOKEN`, `AI_BASE_URL`, `AI_MODEL`, `AI_FALLBACK_MODEL`. The old `OPENROUTER_API_KEY` is still honored as a fallback for backward compatibility, but new deployments should use `AI_TOKEN`. Any OpenAI-compatible provider works: OpenRouter, DeepSeek, OpenAI, Anthropic-via-router, etc.
+- **⏰ Dynamic Cron Scheduler & System Status Registry** — Built-in scheduler supports `dailyAt: "HH:MM"` (with IANA timezone), 5-field cron expressions, and one-shot delays. Every registered job is mirrored to `data/system_registry.json` so users can ask *“@Bot system apa yang lagi jalan?”* and get a transparent list. Toggle any system on/off via natural chat: *“@Bot turn off daily reminder”*.
+- **💾 Automated `.env` Writer & Token Solicitor** — When AI generates code that requires an external API key (e.g. `WEATHER_API_KEY`, `STRIPE_SECRET_KEY`), the AI **pauses**, asks the user in Discord for the token, and once received atomically appends it to `.env` (with backup). Bot then resumes code generation with the new env var available.
+- **🖼️ Discord Interactive Buttons (60s strict expiry)** — Critical confirmations now use native Discord button rows instead of text-based “Ya/Tidak”. Custom IDs encode `expiresAt` so the bot can deterministically expire any button after 60 seconds even if the bot restarts mid-confirmation.
+- **🤖 `@Bot diagnostic`** — Returns a Rich Embed with: free RAM (MB), CPU model + cores, MongoDB connection state, total dynamic commands cached, and estimated AI token spend today. Useful for at-a-glance health checks.
+- **🧪 335 Unit Tests** — Up from 127 in v1.3.1. New: `antiPhishing` (32), `systemRegistry` (30), `scheduler` (26), `envWriter` (33), `tokenSolicitor` (25), `interactiveUI` (24), `diagnostic` (28), `envValidator` updates (10).
+
 ### New in v1.2.0 — Dynamic Autonomous Learning 🧬
 - **🧩 Self-Extending Commands** — Bot can generate, validate, save, and hot-reload new commands on the fly. Ask for a feature that doesn't exist; the bot creates it.
 - **🔍 Code Safety Validator** — Generated code goes through syntax check (`node --check`), forbidden-pattern scan (eval, child_process, fs.rm, spawn, exec, process.exit), and required-export check before being persisted.
@@ -85,17 +94,23 @@ Built with the **ASYNX6** architecture and powered by LLMs (e.g., GPT-4o-mini vi
    Create a `.env` file in the root directory and fill it in:
    ```env
    TOKEN_BOT=your_discord_bot_token
-   OPENROUTER_API_KEY=your_openrouter_api_key
    DISCORD_OWNER_ID=your_discord_id
    MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/yourdbname
+
+   # AI provider (v1.4.0 — any OpenAI-compatible API works)
+   AI_TOKEN=your_ai_token
+   AI_BASE_URL=https://openrouter.ai/api/v1
+   AI_MODEL=openai/gpt-4o-mini
+   AI_FALLBACK_MODEL=openai/gpt-3.5-turbo
    ```
 
    **Required:** `TOKEN_BOT`, `DISCORD_OWNER_ID`
-   **Recommended:** `OPENROUTER_API_KEY` (bot refuses AI calls without it)
+   **Recommended:** `AI_TOKEN` (bot refuses AI calls without it; falls back to legacy `OPENROUTER_API_KEY` if set)
    **Optional:** `MONGODB_URI` (snapshot/undo + context persistence disabled if missing)
    **Optional tuning:**
    - `LOG_LEVEL=DEBUG|INFO|WARN|ERROR` (default `INFO`)
    - `LOG_FILE_PATH=./bot.log` (if set, also writes JSON logs to this file)
+   - `SCHEDULER_TIMEZONE=Asia/Jakarta` (IANA timezone for daily jobs)
 
    *Helpful Links:*
    - Get your MongoDB URI by creating a free database cluster at [MongoDB Atlas](https://www.mongodb.com/atlas/database).
@@ -172,10 +187,18 @@ Test coverage:
 - `tests/logger.test.js` — structured logging, level filtering, secret redaction
 - `tests/cooldown.test.js` — per-user cooldowns, action-specific cooldowns, cleanup
 - `tests/metrics.test.js` — request/action tracking, failure rate math
-- `tests/envValidator.test.js` — startup env validation, placeholder rejection, snowflake format check
+- `tests/envValidator.test.js` — startup env validation, placeholder rejection, AI_TOKEN/OPENROUTER_API_KEY dual support
 - `tests/aiHandler.test.js` — JSON parsing across all response shapes, retry classification
 - `tests/contextManager.test.js` — multi-turn context, eviction, ownership check
 - `tests/dynamicExecutor.test.js` — name sanitization, code validation (syntax + forbidden patterns), save/register/execute lifecycle, hot-reload, cache hits
+- `tests/visionHandler.test.js` — image extraction, provider-driven vision error detection
+- `tests/antiPhishing.test.js` — composite-hash fingerprinting, cross-channel threshold detection, sliding-window cleanup
+- `tests/systemRegistry.test.js` — JSON-backed CRUD, atomic writes, parseSystemCommand natural-language parsing
+- `tests/scheduler.test.js` — dailyAt cron, timezone math, one-shot timers, error capture
+- `tests/envWriter.test.js` — atomic read/write/update with backup, key validation
+- `tests/tokenSolicitor.test.js` — token-required detection in generated code, solicit message builder
+- `tests/interactiveUI.test.js` — button row builders, customId encoding, 60s expiry enforcement
+- `tests/diagnostic.test.js` — RAM/CPU/Mongo/tokens/dynamic-count health snapshot, embed formatter
 
 ---
 
@@ -189,6 +212,94 @@ When a generated command crashes at runtime:
 4. AI regenerates a fixed version
 5. Bot validates → saves (overwrite) → hot-reloads → executes again
 6. Max 3 attempts. If all fail, user is told to retry with clearer intent.
+
+---
+
+## 🛡️ Anti-Phishing System (v1.4.0)
+
+Every incoming message is fingerprinted deterministically (no AI in the hot path):
+
+1. **Normalize text** — lowercase, strip URLs, collapse whitespace
+2. **Hash images per-URL** — same image posted twice = same hash
+3. **Composite hash** — combines text-hash + sorted image-hashes
+4. **Track per-user sliding window** — 2-second window across all channels
+5. **Threshold: > 3 distinct channels** in window with same hash → phishing
+
+If triggered, the bot:
+- Deletes the offending message in **every tracked channel** instantly
+- Logs `security.phishing.detected` with full evidence (user, channels, hashes)
+- Cooldown-locks the user for 60 seconds
+
+```text
+@Bot @everyone claim free nitro at http://scam.example  ← channel A
+@Bot @everyone claim free nitro at http://scam.example  ← channel B
+@Bot @everyone claim free nitro at http://scam.example  ← channel C
+@Bot @everyone claim free nitro at http://scam.example  ← channel D
+                                                            ↑
+                                              triggered (4 channels in <2s)
+                                              all 4 messages deleted
+```
+
+---
+
+## ⏰ Scheduler & System Status Registry (v1.4.0)
+
+```text
+@Bot turn on daily reminder
+@Bot turn off daily reminder
+@Bot system apa yang lagi jalan?
+@Bot system apa aja yang udah kamu buat?
+```
+
+Status persists to `data/system_registry.json` (atomic write: tmp + rename).
+Supports: `dailyAt: "12:00"` (with timezone), 5-field cron, and one-shot timers.
+
+---
+
+## 💾 Automated Token Solicitor (v1.4.0)
+
+When AI-generated code references a missing API key (e.g. `process.env.WEATHER_API_KEY`):
+
+1. AI pauses code generation
+2. Bot replies with a Discord Modal asking for the token
+3. User submits token via Modal
+4. Bot atomically writes token to `.env` (with `.env.bak` backup)
+5. AI resumes code generation with the new env var
+
+---
+
+## 🖼️ Interactive Confirmation UI (v1.4.0)
+
+Critical confirmations now use native Discord button rows. Custom IDs encode `expiresAt` so:
+
+- Buttons auto-disable after **60 seconds** (strict)
+- Click handler validates expiry before executing
+- Works across bot restarts (no in-memory state required)
+
+```text
+┌─────────────────────────────────┐
+│ Konfirmasi: bikin command gacor │
+│ > Bot akan generate + hot-reload │
+│                                  │
+│  [ ✅ Ya ]      [ ❌ Tidak ]     │
+└─────────────────────────────────┘
+       ⏱ Expires in 60s
+```
+
+---
+
+## 🤖 Diagnostic Command (v1.4.0)
+
+```text
+@Bot diagnostic
+```
+
+Returns Rich Embed with:
+- 🧠 **Free RAM** (MB)
+- ⚙️ **CPU** model + cores
+- 🗄️ **MongoDB** connection state
+- 🧩 **Dynamic commands** cached on disk
+- 💸 **Token spend** estimated today
 
 ---
 
