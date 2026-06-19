@@ -2,7 +2,8 @@ import { PermissionFlagsBits } from "discord.js";
 import { getMembersFromInstruction } from "../utils.js";
 
 export async function removerolememberHandler(message, instruction) {
-    const { newName, reason } = instruction;
+    const { newName, reason, name: instructionName } = instruction;
+    const roleName = newName || instructionName;
     const botMember = message.guild.members.me;
 
     if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
@@ -10,11 +11,11 @@ export async function removerolememberHandler(message, instruction) {
     }
 
     const role = message.guild.roles.cache.find(r => 
-        r.id === newName?.replace(/[<@&>]/g, "") || 
-        r.name.toLowerCase() === newName?.toLowerCase()
+        r.id === roleName?.replace(/[<@&>]/g, "") || 
+        r.name.toLowerCase() === roleName?.toLowerCase()
     );
 
-    if (!role) return `Role **${newName}** gak ketemu.`;
+    if (!role) return `Role **${roleName}** gak ketemu.`;
 
     const members = await getMembersFromInstruction(message, instruction);
     const results = [];

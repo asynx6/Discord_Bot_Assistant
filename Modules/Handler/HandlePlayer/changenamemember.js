@@ -1,7 +1,8 @@
 import { PermissionFlagsBits } from "discord.js";
 
 export async function changenamememberHandler(message, item) {
-    const { memberName, newName, reason } = item;
+    const { memberName, newName, reason, name } = item;
+    const targetName = memberName || name;
     const botMember = message.guild.members.me;
 
     try {
@@ -10,19 +11,19 @@ export async function changenamememberHandler(message, item) {
         }
 
         const matches = message.guild.members.cache.filter(m => 
-            m.id === memberName?.replace(/[<@!>]/g, "") ||
-            m.user.username.toLowerCase().includes(memberName?.toLowerCase()) || 
-            m.displayName.toLowerCase().includes(memberName?.toLowerCase())
+            m.id === targetName?.replace(/[<@!>]/g, "") ||
+            m.user.username.toLowerCase().includes(targetName?.toLowerCase()) || 
+            m.displayName.toLowerCase().includes(targetName?.toLowerCase())
         );
 
         if (matches.size > 1) {
             const listNama = matches.map(m => `- **${m.user.tag}** (ID: ${m.id})`).join('\n');
-            return `Ada ${matches.size} orang yang namanya mirip "${memberName}". Yang mana yang mau diganti?\n\n${listNama}\n\nCoba pake @mention atau ID-nya aja biar langsung kena.`;
+            return `Ada ${matches.size} orang yang namanya mirip "${targetName}". Yang mana yang mau diganti?\n\n${listNama}\n\nCoba pake @mention atau ID-nya aja biar langsung kena.`;
         }
 
         const target = message.mentions.members.first() || matches.first();
 
-        if (!target) return `Orang dengan nama atau ID "${memberName}" gak ketemu di server ini.`;
+        if (!target) return `Orang dengan nama atau ID "${targetName}" gak ketemu di server ini.`;
 
         if (target.id === message.guild.ownerId) {
             return `Gue gak punya kuasa buat ganti nama Owner server. Itu mah di luar wewenang gue.`;

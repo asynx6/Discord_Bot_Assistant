@@ -29,7 +29,7 @@ export async function moveMemberHandler(message, instruction) {
     const destChannel = message.guild.channels.cache.find(c =>
         (c.id === targetChannel?.replace(/[<#>]/g, "") ||
         c.name.toLowerCase().includes(targetChannel?.toLowerCase())) &&
-        c.type === ChannelType.GuildVoice
+        (c.type === ChannelType.GuildVoice || c.type === ChannelType.GuildStageVoice)
     );
 
     if (!destChannel) return `Voice channel **"${targetChannel}"** gak ketemu nih.`;

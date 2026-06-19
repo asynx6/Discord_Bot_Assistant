@@ -1,18 +1,39 @@
 import OpenAI from "openai";
 import dotenv from "dotenv";
+import { logger } from "./logger.js";
+import { metrics } from "./metrics.js";
+
 dotenv.config();
 
-const openai = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-  defaultHeaders: {
-    "HTTP-Referer": "https://github.com/asynx6/Discord_Bot_Asistent",
-    "X-Title": "Discord Bot Asistent",
-  }
-});
+const PRIMARY_MODEL = "openai/gpt-4o-mini";
+const FALLBACK_MODEL = "openai/gpt-3.5-turbo";
+
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 800;
+
+let openaiClient = null;
+
+function getClient() {
+    if (openaiClient) return openaiClient;
+
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey || apiKey === "your_openrouter_api_key") {
+        return null;
+    }
+
+    openaiClient = new OpenAI({
+        baseURL: "https://openrouter.ai/api/v1",
+        apiKey,
+        defaultHeaders: {
+            "HTTP-Referer": "https://github.com/asynx6/Discord_Bot_Asistent",
+            "X-Title": "Discord Bot Asistent",
+        },
+    });
+    return openaiClient;
+}
 
 const systemPrompt = `JSON only. You are a High-Level Discord Agent.
-Actions: CREATE_CHANNEL, DELETE_CHANNEL, EDIT_CHANNEL, CLONE_CHANNEL, SET_TOPIC, CREATE_CATEGORY, DELETE_CATEGORY, EDIT_CATEGORY, CREATE_ROLE, DELETE_ROLE, EDIT_ROLE, ROLE_ALL(filterType:ADD|REMOVE), KICK, BAN, MUTE, UNMUTE, UNBAN, WARN, ADD_ROLE_MEMBER, REMOVE_ROLE_MEMBER, CHANGE_NICKNAME_MEMBER, MOVE_MEMBER, MOVE_ALL, DISCONNECT_MEMBER, VOICE_MUTE, VOICE_UNMUTE, VOICE_DEAFEN, VOICE_UNDEAFEN, CHANGE_SERVER_NAME, CLEAN_MESSAGE, LOCK_CHANNEL, UNLOCK_CHANNEL, SLOWMODE, SEND_MESSAGE, CREATE_INVITE, SERVER_INFO, USER_INFO, ANNOUNCE, HELP, ADD_EMOJI, DELETE_EMOJI, AUDIT_LOG, LIST_MEMBERS, UNDO.
+Actions: CREATE_CHANNEL, DELETE_CHANNEL, EDIT_CHANNEL, CLONE_CHANNEL, SET_TOPIC, CREATE_CATEGORY, DELETE_CATEGORY, EDIT_CATEGORY, CREATE_ROLE, DELETE_ROLE, EDIT_ROLE, ROLE_ALL(filterType:ADD|REMOVE), KICK, BAN, MUTE, UNMUTE, UNBAN, WARN, ADD_ROLE_MEMBER, REMOVE_ROLE_MEMBER, CHANGE_NICKNAME_MEMBER, MOVE_MEMBER, MOVE_ALL, DISCONNECT_MEMBER, VOICE_MUTE, VOICE_UNMUTE, VOICE_DEAFEN, VOICE_UNDEAFEN, CHANGE_SERVER_NAME, CLEAN_MESSAGE, LOCK_CHANNEL, UNLOCK_CHANNEL, SLOWMODE, SEND_MESSAGE, CREATE_INVITE, SERVER_INFO, USER_INFO, ANNOUNCE, HELP, ADD_EMOJI, DELETE_EMOJI, AUDIT_LOG, LIST_MEMBERS, UNDO, DYNAMIC_REQUEST.
 
 Rules:
 1. MULTI-ACTION & AUTO-GENERATION: If user asks for 'N' amount of items (e.g., "10 roles from member to founder", "5 channels for admin"), YOU MUST return an ARRAY containing EXACTLY 'N' separate action objects. YOU MUST invent logical, creative names for them if not provided. DO NOT bundle them. Example: For "10 roles", output 10 separate CREATE_ROLE objects. Dependencies first (Categories before Channels).
@@ -32,63 +53,339 @@ Rules:
 15. Slang mapping: "gas kerjakan" = execute/create, "sumpel mulutnya" = mute/timeout, "gembok channel" = lock channel, "buka gembok" = unlock channel, "sikat" = delete/clean, "tendang" = kick, "buang" = ban.
 16. INTELLIGENT FILTER PROTOCOL: For commands like "hapus semua channel kecuali bot", "hapus semua role kecuali admin", "gembok semua channel kecuali lobby", "slowmode semua kecuali chat", use: {"action":"DELETE_CHANNEL|DELETE_ROLE|DELETE_CATEGORY|LOCK_CHANNEL|UNLOCK_CHANNEL|SLOWMODE", "deleteAll":true, "lockAll":true, "unlockAll":true, "applyAll":true, "except":["partialNameOrIdToKeep"]}. The "except" array uses fuzzy matching (e.g., "admin" will save "Admin Role", "Server Admin"). If user mentions the current chat, add its ID to "except".
 17. CASUAL & KID-FRIENDLY LANGUAGE: If user says "Admin", map it to permissions '["Administrator"]'. If they say "Moderator" (e.g. "fitur moderator"), DO NOT use Administrator; instead use a bundle like '["ViewChannel", "ManageMessages", "KickMembers", "BanMembers", "ManageRoles", "ManageChannels"]'. If they say "display role di ceklis/centang", use '"displaySeparately": true'.
-18. LOGIC & STYLING: When generating multiple items, THINK! If making channels, include both TEXT and VOICE types. If making a role hierarchy (e.g., Founder, Admin, Member), assign appropriate permissions implicitly (Founder gets Administrator, Mod gets ManageMessages, etc.). Add emojis to names if it looks better (e.g., "📢│Announce"). You MUST also assign distinct, fitting HEX colors to roles using the "color" field (e.g., "#FFD700" for Founder).
+18. LOGIC & STYLING: When generating multiple items, THINK! If making channels, include both TEXT and VOICE types. If making a role hierarchy (e.g., Founder, Admin, Member), assign appropriate permissions implicitly (Founder gets Administrator, Mod gets ManageMessages, etc.). Add emojis to names if it looks better (e.g., "📢│Announce"). YOU MUST ALWAYS assign distinct, fitting, and beautiful HEX colors to roles using the "color" field, EVEN IF THE USER DOES NOT ASK FOR IT (e.g., "#FFD700" for Founder, "#E91E63" for Member). NEVER leave the color empty or "null".
 19. RESPONSE FORMAT: You MUST return a JSON object containing TWO keys: "actions" (an array of your action objects) and "aiExplanation" (a short, casual message explaining what you just did).
-20. Schema: {"aiExplanation":"message here","actions":[{"action":"VALID_ACTION_NAME","name":"targetName","newName":"newRoleOrName","names":["multi","targets"],"targetUser":"userIdOrMention","amount":100,"type":"TEXT|VOICE|FORUM|ANNOUNCEMENT|STAGE","category":"parent","color":"#hex","permissions":[{"role":"@everyone","allow":["ViewChannel"],"deny":[]}],"deleteAll":false,"displaySeparately":false}]} (NOTE: For CREATE_ROLE, permissions MUST be a flat array of strings like '["Administrator"]'. For CREATE_CHANNEL or CATEGORY, use the object format '[{"role":"@everyone", "allow":["ViewChannel"]}]').`;
+20. Schema: {"aiExplanation":"message here","actions":[{"action":"VALID_ACTION_NAME","name":"targetName","newName":"newRoleOrName","names":["multi","targets"],"targetUser":"userIdOrMention","amount":100,"type":"TEXT|VOICE|FORUM|ANNOUNCEMENT|STAGE","category":"parent","color":"#hex","permissions":[{"role":"@everyone","allow":["ViewChannel"],"deny":[]}],"deleteAll":false,"displaySeparately":false}]} (NOTE: For CREATE_ROLE, permissions MUST be a flat array of strings like '["Administrator"]'. For CREATE_CHANNEL or CATEGORY, use the object format '[{"role":"@everyone", "allow":["ViewChannel"]}]').
+21. DYNAMIC_REQUEST (USE ONLY WHEN NO OTHER ACTION FITS): If the user asks for a command, feature, or behavior that NONE of the above built-in actions can fulfill (e.g. "bikin command gacor", "kalo gw ketik hello jawab halo", "command buat hitung kata"), output: {"action":"DYNAMIC_REQUEST","suggestedName":"short_snake_case_name","intent":"one-line description of what the new command should do","originalQuery":"verbatim user request"}. DO NOT use DYNAMIC_REQUEST for things the built-in actions can already handle. suggestedName must be lowercase, alphanumeric + underscore, max 32 chars.`;
+
+const codeGenSystemPrompt = `You are a Node.js code generator for a Discord bot's dynamic command system.
+Output ONLY valid JavaScript code (no markdown fences, no commentary).
+
+Constraints:
+- The code will be saved to commands/dynamic/handle_<name>.js and dynamically imported.
+- You MUST export a default async function with signature: async (message, params) => string
+  OR export an async named function called 'handle' with the same signature.
+- message is a discord.js Message object.
+- params is an object containing user-provided arguments (params.raw, params.args, params.*).
+- Return a string (the reply message) OR call message.reply(...) and return a status string.
+- Use 'import' statements at the top (this is an ES module file).
+- You may import from "discord.js" freely.
+- You may import from "../../Modules/logger.js" if logging is needed.
+- NEVER use eval(), new Function(), child_process, process.exit(), fs.rm, spawn, or exec.
+- NEVER write to disk outside commands/dynamic/.
+- Keep the code small (under 50KB) and self-contained.
+- If you cannot fulfill the request safely, throw an Error with a clear message.
+
+Example shape:
+import { EmbedBuilder } from "discord.js";
+
+export default async function handle(message, params) {
+    const embed = new EmbedBuilder()
+        .setTitle("Hello")
+        .setDescription(String(params.raw ?? "world"));
+    await message.reply({ embeds: [embed] });
+    return "Sent embed.";
+}`;
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryable(err) {
+    if (!err) return false;
+    const status = err?.status ?? err?.response?.status;
+    if (status && [408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
+
+    const code = err?.code ?? err?.cause?.code;
+    if (code && ["ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED"].includes(code)) return true;
+
+    const msg = String(err?.message ?? "").toLowerCase();
+    return msg.includes("timeout") || msg.includes("rate limit") || msg.includes("temporarily");
+}
+
+// Internal — exported for unit tests
+export const _internal = { extractActions, isRetryable };
+
+/**
+ * Extract action array from whatever shape the LLM returns.
+ * Tolerant to: { actions: [...] }, bare array, { action: {...} }, { "0": {...}, "1": {...} }
+ */
+function extractActions(result) {
+    if (Array.isArray(result)) return result;
+
+    if (result && Array.isArray(result.actions)) return result.actions;
+
+    if (result && typeof result === "object" && result.action) return [result];
+
+    if (result && typeof result === "object") {
+        const numericKeys = Object.keys(result).filter((k) => /^\d+$/.test(k));
+        if (numericKeys.length > 0) {
+            return numericKeys
+                .sort((a, b) => Number(a) - Number(b))
+                .map((k) => result[k])
+                .filter((v) => v && typeof v === "object");
+        }
+    }
+
+    return [];
+}
+
+async function callLlmOnce(client, model, userInput) {
+    return client.chat.completions.create({
+        model,
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userInput },
+        ],
+        response_format: { type: "json_object" },
+    });
+}
 
 export async function getAiInstruction(userInput) {
-  try {
-    const completion = await openai.chat.completions.create({
-      model: "openai/gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userInput }
-      ],
-      response_format: { type: "json_object" }
-    });
-
-    const content = completion.choices[0].message.content;
-    let result;
-
-    try {
-      result = JSON.parse(content);
-    } catch (parseErr) {
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        result = JSON.parse(jsonMatch[0]);
-      } else {
-        return { isError: true, message: "AI ngasih response yang gak bisa dibaca. Coba lagi!" };
-      }
+    const client = getClient();
+    if (!client) {
+        logger.error("ai.no_api_key");
+        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env. Fitur AI nonaktif." };
     }
 
-    let finalResult = {};
-    if (result.aiExplanation) {
-      finalResult.aiExplanation = result.aiExplanation;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const model = attempt === MAX_RETRIES ? FALLBACK_MODEL : PRIMARY_MODEL;
+
+        try {
+            logger.debug("ai.call.attempt", { attempt, model });
+            const completion = await callLlmOnce(client, model, userInput);
+
+            const content = completion.choices?.[0]?.message?.content;
+            if (!content) {
+                throw new Error("AI returned empty content");
+            }
+
+            const usage = completion.usage;
+            if (usage) {
+                metrics.recordAiCall({
+                    inputTokens: usage.prompt_tokens ?? 0,
+                    outputTokens: usage.completion_tokens ?? 0,
+                });
+            }
+
+            let parsed;
+            try {
+                parsed = JSON.parse(content);
+            } catch (parseErr) {
+                const match = content.match(/\{[\s\S]*\}/);
+                if (match) {
+                    parsed = JSON.parse(match[0]);
+                } else {
+                    throw new Error("AI response is not valid JSON");
+                }
+            }
+
+            const actions = extractActions(parsed);
+            if (actions.length === 0 && !parsed.aiExplanation) {
+                throw new Error("AI response contained no actions");
+            }
+
+            const finalResult = {};
+            if (parsed.aiExplanation) finalResult.aiExplanation = parsed.aiExplanation;
+
+            actions.forEach((item, idx) => {
+                finalResult[idx] = item;
+            });
+
+            logger.info("ai.call.success", { attempt, model, actionCount: actions.length });
+            return { isError: false, ...finalResult };
+        } catch (err) {
+            lastError = err;
+            logger.warn("ai.call.failed", {
+                attempt,
+                model,
+                error: err?.message ?? String(err),
+            });
+
+            if (!isRetryable(err) || attempt === MAX_RETRIES) break;
+
+            const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+            await sleep(delayMs);
+        }
     }
 
-    let actionsArray = [];
-    if (result.actions && Array.isArray(result.actions)) {
-      actionsArray = result.actions;
-    } else if (Array.isArray(result)) {
-      actionsArray = result;
-    } else if (result.action) {
-      actionsArray = [result];
-    } else if (typeof result === "object" && Object.keys(result).length > 0) {
-       const numericKeys = Object.keys(result).filter(k => !isNaN(k));
-       if (numericKeys.length > 0) {
-           numericKeys.forEach(k => actionsArray.push(result[k]));
-       } else {
-           actionsArray = [result];
-       }
+    logger.error("ai.call.exhausted", { error: lastError?.message });
+    return {
+        isError: true,
+        message: `Gagal kontak otak AI setelah ${MAX_RETRIES} percobaan: ${lastError?.message ?? "unknown error"}`,
+    };
+}
+
+/**
+ * Generate raw JavaScript code for a new dynamic command.
+ * Used by the confirmation flow when user approves building a new command.
+ *
+ * @param {string} suggestedName - snake_case identifier for the new command
+ * @param {string} intent - one-line description of what it should do
+ * @param {string} originalQuery - the user's original request verbatim
+ * @returns {Promise<{ isError: boolean, code?: string, message?: string }>}
+ */
+export async function generateDynamicCode(suggestedName, intent, originalQuery) {
+    const client = getClient();
+    if (!client) {
+        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env." };
     }
 
-    actionsArray.forEach((item, index) => {
-      finalResult[index] = item;
-    });
+    const userPrompt = [
+        `Command name: ${suggestedName}`,
+        `Intent: ${intent}`,
+        `Original user request: ${originalQuery}`,
+        ``,
+        `Return ONLY the JavaScript source code (no markdown, no commentary).`,
+    ].join("\n");
 
-    return { isError: false, ...finalResult };
-  } catch (e) {
-    console.error("AI Error:", e.message);
-    return { isError: true, message: "Gagal kontak otak AI." };
-  }
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const model = attempt === MAX_RETRIES ? FALLBACK_MODEL : PRIMARY_MODEL;
+        try {
+            logger.debug("ai.codegen.attempt", { attempt, model, suggestedName });
+
+            const completion = await client.chat.completions.create({
+                model,
+                messages: [
+                    { role: "system", content: codeGenSystemPrompt },
+                    { role: "user", content: userPrompt },
+                ],
+            });
+
+            const raw = completion.choices?.[0]?.message?.content ?? "";
+            const usage = completion.usage;
+            if (usage) {
+                metrics.recordAiCall({
+                    inputTokens: usage.prompt_tokens ?? 0,
+                    outputTokens: usage.completion_tokens ?? 0,
+                });
+            }
+
+            // Strip markdown code fences if the model added them.
+            let code = String(raw).trim();
+            const fenceMatch = code.match(/^```(?:javascript|js)?\s*\n?([\s\S]*?)\n?```\s*$/);
+            if (fenceMatch) code = fenceMatch[1].trim();
+
+            if (!code) throw new Error("AI returned empty code");
+
+            logger.info("ai.codegen.success", { attempt, model, suggestedName, bytes: code.length });
+            return { isError: false, code };
+        } catch (err) {
+            lastError = err;
+            logger.warn("ai.codegen.failed", {
+                attempt,
+                model,
+                suggestedName,
+                error: err?.message ?? String(err),
+            });
+            if (!isRetryable(err) || attempt === MAX_RETRIES) break;
+            const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+            await sleep(delayMs);
+        }
+    }
+
+    logger.error("ai.codegen.exhausted", { suggestedName, error: lastError?.message });
+    return {
+        isError: true,
+        message: `Gagal generate kode setelah ${MAX_RETRIES} percobaan: ${lastError?.message ?? "unknown error"}`,
+    };
+}
+
+/**
+ * Regenerate code with the runtime error from the previous attempt included
+ * as context. Used by the self-healing flow when generated code crashes at runtime.
+ *
+ * @param {string} suggestedName
+ * @param {string} intent
+ * @param {string} originalQuery
+ * @param {string} previousCode - the code that just crashed
+ * @param {string} errorMessage - the runtime error captured
+ * @param {number} attempt - which self-heal attempt this is (1-indexed)
+ * @returns {Promise<{ isError: boolean, code?: string, message?: string }>}
+ */
+export async function regenerateWithErrorContext(suggestedName, intent, originalQuery, previousCode, errorMessage, attempt = 1) {
+    const client = getClient();
+    if (!client) {
+        return { isError: true, message: "OPENROUTER_API_KEY belum diisi di .env." };
+    }
+
+    const userPrompt = [
+        `Command name: ${suggestedName}`,
+        `Intent: ${intent}`,
+        `Original user request: ${originalQuery}`,
+        ``,
+        `PREVIOUS ATTEMPT (attempt #${attempt}) PRODUCED THIS CODE:`,
+        "```javascript",
+        previousCode,
+        "```",
+        ``,
+        `BUT IT CRASHED AT RUNTIME WITH THIS ERROR:`,
+        "```",
+        errorMessage,
+        "```",
+        ``,
+        `Please regenerate a FIXED version. Common fixes:`,
+        `- Make sure the function signature matches: async (message, params) => string`,
+        `- Wrap risky API calls in try/catch`,
+        `- Check that discord.js method names exist (e.g. message.reply, message.channel.send)`,
+        `- Ensure all imported names are actually exported from the modules`,
+        `- Throw a clear Error if a required param is missing`,
+        ``,
+        `Return ONLY the corrected JavaScript source code (no markdown commentary).`,
+    ].join("\n");
+
+    let lastError = null;
+
+    for (let tryAttempt = 1; tryAttempt <= MAX_RETRIES; tryAttempt++) {
+        const model = tryAttempt === MAX_RETRIES ? FALLBACK_MODEL : PRIMARY_MODEL;
+        try {
+            logger.debug("ai.codegen.heal.attempt", { attempt, tryAttempt, model, suggestedName });
+            const completion = await client.chat.completions.create({
+                model,
+                messages: [
+                    { role: "system", content: codeGenSystemPrompt },
+                    { role: "user", content: userPrompt },
+                ],
+            });
+
+            const raw = completion.choices?.[0]?.message?.content ?? "";
+            const usage = completion.usage;
+            if (usage) {
+                metrics.recordAiCall({
+                    inputTokens: usage.prompt_tokens ?? 0,
+                    outputTokens: usage.completion_tokens ?? 0,
+                });
+            }
+
+            let code = String(raw).trim();
+            const fenceMatch = code.match(/^```(?:javascript|js)?\s*\n?([\s\S]*?)\n?```\s*$/);
+            if (fenceMatch) code = fenceMatch[1].trim();
+
+            if (!code) throw new Error("AI returned empty code on heal attempt");
+            logger.info("ai.codegen.heal.success", { attempt, tryAttempt, model, suggestedName, bytes: code.length });
+            return { isError: false, code };
+        } catch (err) {
+            lastError = err;
+            logger.warn("ai.codegen.heal.failed", {
+                attempt,
+                tryAttempt,
+                model,
+                suggestedName,
+                error: err?.message ?? String(err),
+            });
+            if (!isRetryable(err) || tryAttempt === MAX_RETRIES) break;
+            const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, tryAttempt - 1);
+            await sleep(delayMs);
+        }
+    }
+
+    logger.error("ai.codegen.heal.exhausted", { suggestedName, error: lastError?.message });
+    return {
+        isError: true,
+        message: `Gagal regenerate kode setelah ${MAX_RETRIES} percobaan: ${lastError?.message ?? "unknown error"}`,
+    };
 }

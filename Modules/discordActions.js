@@ -42,6 +42,14 @@ import { cloneChannelHandler } from "./Handler/HandleChannel/clonechannel.js";
 import { setTopicHandler } from "./Handler/HandleChannel/settopic.js";
 import { roleAllHandler } from "./Handler/HandleRoles/roleall.js";
 import { takeSnapshot, undoLastAction } from "./snapshotManager.js";
+import { metrics } from "./metrics.js";
+import { logger } from "./logger.js";
+import {
+    hasDynamicCommand,
+    executeDynamicCommand,
+    getDynamicCommand,
+    listDynamicCommands,
+} from "./dynamicExecutor.js";
 
 const ACTION_PRIORITY = {
     CREATE_CATEGORY: 1,
@@ -87,6 +95,8 @@ const ACTION_PRIORITY = {
     AUDIT_LOG: 10,
     LIST_MEMBERS: 10,
     HELP: 10,
+    DYNAMIC_REQUEST: 1,
+    DYNAMIC_EXECUTE: 3,
     UNDO: 0,
 };
 
@@ -151,16 +161,62 @@ const ACTION_HANDLER_MAP = {
     AUDIT_LOG: (msg, item) => auditLogHandler(msg, item),
     LIST_MEMBERS: (msg, item) => listMembersHandler(msg, item),
     UNDO: (msg) => undoLastAction(msg.guild),
+    DYNAMIC_REQUEST: async (msg, item) => {
+        // This is intercepted by index.js before execution; if we got here
+        // it means the confirmation flow wasn't used (legacy path).
+        return `🔧 Fitur **${item.suggestedName || "?"}** butuh persetujuan. Coba ulangi request biar bot bisa nanya konfirmasi dulu.`;
+    },
+    DYNAMIC_EXECUTE: async (msg, item) => {
+        const name = item.suggestedName || item.name;
+        if (!name) return "❌ Dynamic command tanpa nama.";
+        if (!hasDynamicCommand(name)) {
+            return `❌ Dynamic command **${name}** belum ke-load. Coba restart bot atau bikin ulang.`;
+        }
+        const params = {
+            raw: item.raw ?? msg.content,
+            args: Array.isArray(item.args) ? item.args : [],
+            ...item,
+        };
+        const exec = await executeDynamicCommand(name, msg, params);
+        if (!exec.ok) return `❌ Error di **${name}**: ${exec.error}`;
+        return exec.result || "✅ Dynamic command selesai.";
+    },
 };
 
 export async function executeAiAction(message, instructions) {
     if (!instructions) return "AI gak ngasih instruksi apa-apa nih.";
 
     const actionList = Object.keys(instructions)
-        .filter(key => !isNaN(key))
-        .map(key => instructions[key]);
+        .filter((key) => !isNaN(key))
+        .map((key) => instructions[key]);
 
-    if (actionList.length === 0) return "Hah? jujur aja, gue gak ngerti apa yang lu mau.";
+    // Handle DYNAMIC_REQUEST specially — caller (index.js) is expected to
+    // intercept it for the confirmation flow, but if we get here, skip it.
+    const realActions = actionList.filter(
+        (item) => (item.action || "").toUpperCase() !== "DYNAMIC_REQUEST"
+    );
+    const dynamicRequests = actionList.filter(
+        (item) => (item.action || "").toUpperCase() === "DYNAMIC_REQUEST"
+    );
+
+    if (realActions.length === 0 && dynamicRequests.length === 0) {
+        return "Hah? jujur aja, gue gak ngerti apa yang lu mau.";
+    }
+
+    // If only DYNAMIC_REQUEST, return its data so index.js can drive confirmation.
+    if (realActions.length === 0) {
+        const req = dynamicRequests[0];
+        return { __dynamicRequest: true, suggestedName: req.suggestedName, intent: req.intent, originalQuery: req.originalQuery };
+    }
+
+    // Expand DYNAMIC_EXECUTE references — if any item references a dynamic
+    // command that's already loaded, mark it executed via the dedicated handler.
+    for (const item of realActions) {
+        const name = item.suggestedName || item.name;
+        if (name && hasDynamicCommand(name) && (item.action || "").toUpperCase() === "EXECUTE_DYNAMIC") {
+            item.action = "DYNAMIC_EXECUTE";
+        }
+    }
 
     const infoActions = ["HELP", "SERVER_INFO", "USER_INFO", "AUDIT_LOG", "LIST_MEMBERS", "UNDO"];
     const hasModifyingAction = actionList.some(item => !infoActions.includes(item.action?.toUpperCase()));
@@ -201,12 +257,14 @@ export async function executeAiAction(message, instructions) {
                 results.push(res);
             }
             executionLog.push({ action: actionName, status: "OK", name: item.name });
+            metrics.recordAction(actionName, true);
         } catch (handlerError) {
             failedCount++;
             const errorMsg = `❌ **${actionName}** gagal: ${handlerError.message || "Unknown error"}`;
             results.push(errorMsg);
             executionLog.push({ action: actionName, status: "FAILED", error: handlerError.message });
-            console.error(`[HANDLER CRASH] ${actionName}:`, handlerError);
+            metrics.recordAction(actionName, false);
+            logger.error("handler.failed", { action: actionName, error: handlerError?.message });
         }
 
         if (sortedActions.indexOf(item) < sortedActions.length - 1) {

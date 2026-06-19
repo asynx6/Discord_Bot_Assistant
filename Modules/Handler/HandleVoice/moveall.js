@@ -11,7 +11,7 @@ export async function moveAllHandler(message, instruction) {
     const sourceVC = message.guild.channels.cache.find(c =>
         (c.id === name?.replace(/[<#>]/g, "") ||
         c.name.toLowerCase().includes(name?.toLowerCase())) &&
-        c.type === ChannelType.GuildVoice
+        (c.type === ChannelType.GuildVoice || c.type === ChannelType.GuildStageVoice)
     );
 
     if (!sourceVC) return `Voice channel sumber **"${name}"** gak ketemu.`;
@@ -19,7 +19,7 @@ export async function moveAllHandler(message, instruction) {
     const destVC = message.guild.channels.cache.find(c =>
         (c.id === targetChannel?.replace(/[<#>]/g, "") ||
         c.name.toLowerCase().includes(targetChannel?.toLowerCase())) &&
-        c.type === ChannelType.GuildVoice
+        (c.type === ChannelType.GuildVoice || c.type === ChannelType.GuildStageVoice)
     );
 
     if (!destVC) return `Voice channel tujuan **"${targetChannel}"** gak ketemu.`;

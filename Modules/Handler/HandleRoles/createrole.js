@@ -9,9 +9,10 @@ export async function createroleHandler(message, instruction) {
     }
 
     try {
+        const finalColor = (!color || color === "null") ? 0 : color;
         const createData = {
             name: name || "Role Baru",
-            color: color || null,
+            color: finalColor,
             reason: reason || "Perintah Asisten AI",
             hoist: displaySeparately === true, 
             mentionable: allowMention === true

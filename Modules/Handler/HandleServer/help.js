@@ -1,6 +1,6 @@
 export async function helpHandler(message) {
     const helpText = `
-🤖 **ASISTEN AI v2.0 — BENI-GANTENG ENGINE** 🤖
+🤖 **DISCORD BOT ASSISTANT v2.0 (Beta)** 🤖
 
 Gak usah hapalin perintah! Sebut aja mau lo apa pake bahasa manusia (bahkan bahasa gaul), gue bakal ngerti. Ini beberapa hal yang bisa gue lakuin:
 

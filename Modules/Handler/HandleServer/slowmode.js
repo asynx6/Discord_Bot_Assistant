@@ -29,7 +29,7 @@ export async function slowmodeHandler(message, instruction) {
         }
 
         const textChannels = message.guild.channels.cache.filter(c =>
-            c.type === ChannelType.GuildText &&
+            (c.type === ChannelType.GuildText || c.type === ChannelType.GuildForum) &&
             !exceptIds.has(c.id) &&
             botMember.permissionsIn(c).has(PermissionFlagsBits.ManageChannels)
         );

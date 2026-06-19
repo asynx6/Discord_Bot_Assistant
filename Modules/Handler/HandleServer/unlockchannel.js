@@ -28,7 +28,8 @@ export async function unlockChannelHandler(message, instruction) {
 
         const unlockableChannels = message.guild.channels.cache.filter(c =>
             (c.type === ChannelType.GuildText || c.type === ChannelType.GuildVoice ||
-             c.type === ChannelType.GuildAnnouncement || c.type === ChannelType.GuildStageVoice) &&
+             c.type === ChannelType.GuildAnnouncement || c.type === ChannelType.GuildStageVoice ||
+             c.type === ChannelType.GuildForum) &&
             !exceptIds.has(c.id) &&
             botMember.permissionsIn(c).has(PermissionFlagsBits.ManageChannels)
         );

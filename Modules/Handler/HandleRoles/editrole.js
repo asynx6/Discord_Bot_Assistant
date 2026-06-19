@@ -51,7 +51,7 @@ export async function editRoleHandler(message, instruction) {
             }
         }
 
-        if (color) {
+        if (color && color !== "null") {
             updateData.color = color;
             changes.push("warnanya");
         }
@@ -67,14 +67,18 @@ export async function editRoleHandler(message, instruction) {
         }
 
         if (permissions && Array.isArray(permissions)) {
-            const permData = permissions[0];
-            if (permData) {
-                const allowFlags = (permData.allow || []).map(p => PermissionFlagsBits[p]).filter(p => p != null);
+            let allowFlags = [];
 
-                if (allowFlags.length > 0) {
-                    updateData.permissions = allowFlags.reduce((all, p) => all | p, role.permissions.bitfield);
-                    changes.push("permission-nya");
-                }
+            if (typeof permissions[0] === "string") {
+                allowFlags = permissions.map(p => PermissionFlagsBits[p]).filter(p => p != null);
+            } else if (permissions[0] && typeof permissions[0] === "object") {
+                const permData = permissions[0];
+                allowFlags = (permData.allow || []).map(p => PermissionFlagsBits[p]).filter(p => p != null);
+            }
+
+            if (allowFlags.length > 0) {
+                updateData.permissions = allowFlags.reduce((all, p) => all | p, role.permissions.bitfield);
+                changes.push("permission-nya");
             }
         }
 

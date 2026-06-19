@@ -49,6 +49,8 @@ export async function editkategoriHandler(message, instruction) {
         if (permissions && Array.isArray(permissions)) {
             const permissionOverwrites = [];
             for (const perm of permissions) {
+                if (typeof perm !== "object" || !perm.role) continue;
+                
                 const roleTarget = message.guild.roles.cache.find(r => 
                     r.id === perm.role.replace(/[<@&>]/g, "") ||
                     r.name.toLowerCase() === perm.role.toLowerCase() || 
