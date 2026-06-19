@@ -1,4 +1,4 @@
-import { logger } from "../../logger.js";
+import { logger } from "../logger.js";
 
 /**
  * Resolve target members from an AI instruction payload.
