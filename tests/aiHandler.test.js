@@ -2,7 +2,51 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { _internal, buildUserContent } from "../Modules/aiHandler.js";
 
-const { extractActions, isRetryable } = _internal;
+const { extractActions, isRetryable, classifyAiError } = _internal;
+
+// ---------- classifyAiError ----------
+
+test("classifyAiError: 401 returns clear Indonesian message with provider URL", () => {
+    const msg = classifyAiError({ status: 401, error: { message: "User not found." } }, 3);
+    assert.match(msg, /🔑/);
+    assert.match(msg, /API key ditolak/);
+    assert.match(msg, /openrouter\.ai\/keys/);
+    assert.match(msg, /User not found\./);
+});
+
+test("classifyAiError: 403 same clear treatment as 401", () => {
+    const msg = classifyAiError({ status: 403, error: { message: "Forbidden" } }, 3);
+    assert.match(msg, /🔑/);
+    assert.match(msg, /Forbidden/);
+});
+
+test("classifyAiError: 402 says credit habis with provider base URL", () => {
+    const msg = classifyAiError({ status: 402, error: { message: "Insufficient credits" } }, 3);
+    assert.match(msg, /💰/);
+    assert.match(msg, /Credit/);
+    assert.match(msg, /Insufficient credits/);
+});
+
+test("classifyAiError: 500 falls back to generic gagal-kontak format", () => {
+    const msg = classifyAiError({ status: 500, message: "Internal error" }, 3);
+    assert.match(msg, /Gagal kontak otak AI/);
+    assert.match(msg, /3 percobaan/);
+    assert.match(msg, /Internal error/);
+});
+
+test("classifyAiError: extracts message from response.data.error.message", () => {
+    const msg = classifyAiError(
+        { status: 401, response: { data: { error: { message: "Invalid API key" } } } },
+        3
+    );
+    assert.match(msg, /🔑/);
+    assert.match(msg, /Invalid API key/);
+});
+
+test("classifyAiError: handles unknown shape gracefully", () => {
+    const msg = classifyAiError({}, 3);
+    assert.match(msg, /Gagal kontak otak AI/);
+});
 
 // ---------- extractActions ----------
 

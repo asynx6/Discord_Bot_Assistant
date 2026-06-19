@@ -1,6 +1,6 @@
 import { Client, GatewayIntentBits, ActivityType } from "discord.js";
 import path from "node:path";
-import { getAiInstruction, generateDynamicCode, regenerateWithErrorContext } from "./Modules/aiHandler.js";
+import { getAiInstruction, generateDynamicCode, regenerateWithErrorContext, checkAiHealth } from "./Modules/aiHandler.js";
 import {
     extractImageFromMessage,
     visionUnsupportedMessage,
@@ -364,6 +364,27 @@ client.once("clientReady", async () => {
         logger.info("scheduler.startup_done", { jobCount: scheduler.size() });
     } catch (err) {
         logger.error("scheduler.startup_failed", { error: err?.message });
+    }
+
+    // v1.4.0 — probe AI provider at startup so we surface bad API keys
+    // immediately instead of waiting for the first user message to fail.
+    try {
+        const aiHealth = await checkAiHealth();
+        if (aiHealth.ok) {
+            logger.info("ai.health_ok", { model: aiHealth.model });
+        } else {
+            logger.error("ai.health_failed", {
+                status: aiHealth.status,
+                message: aiHealth.message,
+                hint: aiHealth.status === 401 || aiHealth.status === 403
+                    ? "API key invalid/expired. Ganti AI_APIKEY di .env lalu restart bot."
+                    : aiHealth.status === 402
+                        ? "Credit habis. Top up di provider lalu restart bot."
+                        : "Cek koneksi internet & konfigurasi AI_BASE_URL.",
+            });
+        }
+    } catch (err) {
+        logger.warn("ai.health_probe_failed", { error: err?.message });
     }
 });
 

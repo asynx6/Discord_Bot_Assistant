@@ -127,8 +127,55 @@ function isRetryable(err) {
     return msg.includes("timeout") || msg.includes("rate limit") || msg.includes("temporarily");
 }
 
+/**
+ * Translate raw AI errors into Indonesian, actionable messages.
+ * 401/403 (auth) — never retry; tell user the key is bad.
+ * 402 (payment) — never retry; tell user to top up credits.
+ * 429 (rate limit) — retry handled by isRetryable, but message clarifies.
+ * Other — generic "gagal kontak" message.
+ */
+function classifyAiError(err, attempts) {
+    const status = err?.status ?? err?.response?.status;
+    const rawMsg = err?.response?.data?.error?.message ?? err?.error?.message ?? err?.message ?? "";
+    if (status === 401 || status === 403) {
+        return `🔑 API key ditolak oleh provider (${status}). Kemungkinan AI_APIKEY di .env udah expired/revoked. Cek & ganti di https://openrouter.ai/keys — pesan dari provider: "${rawMsg}"`;
+    }
+    if (status === 402) {
+        return `💰 Credit di provider udah abis (402). Top up dulu di ${process.env.AI_BASE_URL || "https://openrouter.ai"} sebelum lanjut. Pesan provider: "${rawMsg}"`;
+    }
+    return `Gagal kontak otak AI setelah ${attempts} percobaan: ${rawMsg || "unknown error"}`;
+}
+
+/**
+ * Lightweight startup probe — verifies the API key actually works before
+ * the bot accepts traffic. Cheap call (1 token). Returns
+ * `{ ok: true, model }` on success or `{ ok: false, status, message }` on failure.
+ */
+export async function checkAiHealth() {
+    const client = getClient();
+    if (!client) {
+        return { ok: false, status: null, message: "AI_APIKEY belum diisi di .env." };
+    }
+    try {
+        const completion = await client.chat.completions.create({
+            model: PRIMARY_MODEL,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+            temperature: 0,
+        });
+        return { ok: true, model: completion?.model ?? PRIMARY_MODEL };
+    } catch (err) {
+        const status = err?.status ?? err?.response?.status ?? null;
+        return {
+            ok: false,
+            status,
+            message: err?.response?.data?.error?.message ?? err?.error?.message ?? err?.message ?? String(err),
+        };
+    }
+}
+
 // Internal — exported for unit tests
-export const _internal = { extractActions, isRetryable, buildUserContent, resolveAiConfig };
+export const _internal = { extractActions, isRetryable, buildUserContent, resolveAiConfig, classifyAiError, checkAiHealth };
 
 /**
  * Extract action array from whatever shape the LLM returns.
@@ -281,7 +328,7 @@ export async function getAiInstruction(userInput, imageUrls = []) {
     return {
         isError: true,
         rawError: lastError,
-        message: `Gagal kontak otak AI setelah ${MAX_RETRIES} percobaan: ${lastError?.message ?? "unknown error"}`,
+        message: classifyAiError(lastError, MAX_RETRIES),
     };
 }
 
