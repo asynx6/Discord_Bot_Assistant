@@ -1,0 +1,6 @@
+# Dynamic commands are stored here at runtime.
+# Each file MUST be named handle_<name>.js and export a default async function:
+#   export default async function (message, params) { ... return "result string"; }
+# Or a named 'handle' function:
+#   export async function handle(message, params) { ... }
+# Code is validated for syntax and forbidden patterns before being written.
