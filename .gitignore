@@ -146,3 +146,10 @@ data/
 .env.bak
 commands/dynamic/
 
+
+# Archive backups
+*.rar
+*.zip
+*.7z
+*.tar.gz
+
