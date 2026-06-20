@@ -243,25 +243,48 @@ export function formatSystemList(entries) {
 /**
  * Try to interpret a user message as a system command. Returns one of:
  *   { kind: "list" }
- *   { kind: "toggle", id }
+ *   { kind: "toggle", id, status }
  *   { kind: "status", id }
+ *   { kind: "statusByName", query }  -- caller should fuzzy-match against registry
  *   { kind: "unknown" }
  *
  * This is intentionally conservative — it only matches clear, explicit
  * phrasings. Anything ambiguous falls through to `unknown` so the AI
  * handler can still try to interpret it.
+ *
+ * IMPORTANT: status/list queries are READ-ONLY. They must NEVER trigger
+ * DYNAMIC_REQUEST (which would auto-generate a new command and break the
+ * user's intent). Only verbs like "bikin/buat/tambahin/buatin/create"
+ * should fall through to AI for code generation.
  */
 export function parseSystemCommand(message) {
     if (!message || typeof message !== "string") return { kind: "unknown" };
     const m = message.trim().toLowerCase();
 
+    // ----- LIST -----
+
+    // Explicit list starters: "list systems", "lihat sistem", "tunjukin fitur", etc.
     if (/^(list|show|lihat|tunjukin|sebutin)\b.*\b(system|sistem|fitur|systems|semuanya|yang\s+(lagi|jalan|aktif|aktif\s+aja)?)\b/.test(m)) {
         return { kind: "list" };
     }
-    // "apa yang lagi jalan / off" / "apa aja yang kamu buat" style
+    // Natural question form: "apa yang lagi jalan / off", "apa aja yang kamu buat"
     if (/^apa\s+(yang|aja|saja)\s+(yang\s+)?(lagi|udah|sudah|jalan|aktif|off|offline|buat|dibuat)/.test(m)) {
         return { kind: "list" };
     }
+    // Natural list form: "system apa saja yang sedang berjalan / aktif / jalan"
+    if (/^(system|sistem|fitur)\s+(apa|apa\s+saja|apa\s+aja|yang)\s+(sedang|lagi|yang|saat\s+ini)?\s*(berjalan|aktif|jalan|on|nyala|enable|mati|off)?/.test(m)) {
+        return { kind: "list" };
+    }
+    // "semua sistem / semua fitur"
+    if (/^(semua|all)\s+(system|sistem|fitur|systems)/.test(m)) {
+        return { kind: "list" };
+    }
+    // "daftar sistem / fitur"
+    if (/^(daftar|list\s+of)\s+(system|sistem|fitur)/.test(m)) {
+        return { kind: "list" };
+    }
+
+    // ----- TOGGLE -----
 
     let mt = m.match(/^(turn|set|nyalakan|matikan|aktifkan|nonaktifkan|enable|disable)\s+(on|off|ya|tidak|true|false)?\s*(?:fitur|system|sistem|reminder|cron|jadwal)?\s*([a-z0-9_]+)?/);
     if (mt) {
@@ -279,13 +302,68 @@ export function parseSystemCommand(message) {
         }
     }
 
+    // ----- STATUS (by exact id) -----
+
     mt = m.match(/^(status|cek|check)\s+([a-z0-9_]+)/);
     if (mt) {
         return { kind: "status", id: mt[2] };
     }
 
+    // ----- STATUS (by natural name — fuzzy lookup needed) -----
+
+    // "untuk system anti_phishing / anti phishing"
+    mt = m.match(/^(?:untuk|soal|tentang|hal)\s+(?:system|sistem|fitur)\s+([a-z0-9_\s]+?)(?:\?|$|\s+(udah|sudah|lagi|aktif|gimana|kayak|gmn|status))/);
+    if (mt) {
+        return { kind: "statusByName", query: mt[1].trim() };
+    }
+    // "anti_phishing udah jalan?" / "daily_reminder aktif?"
+    mt = m.match(/^([a-z0-9_]+)\s+(udah|sudah|lagi|aktif|nyala|on|jalan|jalan\?|aktif\?|nyala\?|running|work)/);
+    if (mt) {
+        return { kind: "statusByName", query: mt[1] };
+    }
+    // "gimana daily_reminder?" / "kayak apa anti_phishing?"
+    mt = m.match(/^(gimana|gmn|kayak|kayak\s+apa|apa\s+kabar)\s+([a-z0-9_\s]+?)\??$/);
+    if (mt) {
+        return { kind: "statusByName", query: mt[2].trim() };
+    }
+    // "apakah X aktif/ jalan?"
+    mt = m.match(/^apakah\s+([a-z0-9_\s]+?)\s+(aktif|jalan|nyala|on|enable|running|berfungsi|work|udah\s+jalan)/);
+    if (mt) {
+        return { kind: "statusByName", query: mt[1].trim() };
+    }
+
     return { kind: "unknown" };
 }
 
+/**
+ * Find a system entry whose name or id fuzzy-matches the query.
+ * "anti phishing" matches entry id="anti_phishing" via underscore normalization.
+ * Returns the entry or null.
+ *
+ * @param {SystemRegistry} registry
+ * @param {string} query
+ */
+export function findSystemByFuzzyName(registry, query) {
+    if (!registry || typeof query !== "string") return null;
+    const normalized = query.toLowerCase().trim().replace(/[\s-]+/g, "_");
+    const all = registry.list();
+    // Exact id match
+    const exact = all.find((e) => e.id === normalized);
+    if (exact) return exact;
+    // Name match (case-insensitive, contains)
+    const nameMatch = all.find((e) =>
+        e.name?.toLowerCase().replace(/[\s-]+/g, "_") === normalized
+    );
+    if (nameMatch) return nameMatch;
+    // Partial match — id or name contains the query
+    const partial = all.find((e) =>
+        e.id.includes(normalized) ||
+        normalized.includes(e.id) ||
+        e.name?.toLowerCase().includes(normalized) ||
+        normalized.includes(e.name?.toLowerCase().replace(/[\s-]+/g, "_") ?? "____")
+    );
+    return partial ?? null;
+}
+
 export { SystemRegistry };
-export const _internal = { DEFAULT_PATH };
+export const _internal = { DEFAULT_PATH, findSystemByFuzzyName };

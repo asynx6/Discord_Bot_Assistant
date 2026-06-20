@@ -28,6 +28,7 @@ import {
     getDefaultRegistry,
     formatSystemList,
     parseSystemCommand,
+    findSystemByFuzzyName,
 } from "./Modules/systemRegistry.js";
 import { getDefaultScheduler } from "./Modules/scheduler.js";
 import {
@@ -163,13 +164,47 @@ function pickCooldownTag(instruction) {
     return null;
 }
 
-function pickDynamicRequest(instruction) {
+/**
+ * Detect whether a user query is a pure question (read-only) vs an explicit
+ * request to build/create something. Pure questions must NEVER trigger
+ * DYNAMIC_REQUEST — they should fall through to the AI's aiExplanation.
+ *
+ * Examples that ARE questions (return true):
+ *   - "system apa saja yang sedang berjalan"
+ *   - "anti phishing udah jalan?"
+ *   - "gimana daily reminder?"
+ *   - "apa itu DYNAMIC_REQUEST?"
+ *
+ * Examples that are NOT questions (return false):
+ *   - "bikin system anti_phishing untuk filter link"
+ *   - "tambahin command buat hitung kata"
+ *   - "buat fitur reminder jam 8 pagi"
+ */
+function looksLikeQuestion(text) {
+    if (!text || typeof text !== "string") return false;
+    const m = text.trim().toLowerCase();
+    // Has question mark OR starts with interrogative words (without imperative verbs)
+    const interrogativeStart = /^(apa|apakah|gimana|gmn|kayak|kayak\s+apa|kapan|dimana|di mana|siapa|berapa|kenapa|kenapakah|mengapa|what|how|when|where|who|why)\b/.test(m);
+    const endsWithQuestion = /\?\s*$/.test(m);
+    // Imperative verbs that signal "make something"
+    const hasImperativeVerb = /\b(bikin|buatin|buat|tambahin|tambahkan|create|add|generate|develop|bangun|rancang|implement)\b/.test(m);
+    if (endsWithQuestion && !hasImperativeVerb) return true;
+    if (interrogativeStart && !hasImperativeVerb) return true;
+    return false;
+}
+
+function pickDynamicRequest(instruction, originalQuery = "") {
     if (!instruction || instruction.isError) return null;
     const items = Object.keys(instruction)
         .filter((k) => /^\d+$/.test(k))
         .map((k) => instruction[k]);
     const req = items.find((i) => (i.action || "").toUpperCase() === "DYNAMIC_REQUEST");
-    return req || null;
+    if (!req) return null;
+    if (looksLikeQuestion(originalQuery)) {
+        logger.debug("dynamic_request.rejected_question", { originalQuery });
+        return null;
+    }
+    return req;
 }
 
 async function askDynamicConfirmation(message, req) {
@@ -614,6 +649,30 @@ client.on("messageCreate", async (message) => {
                         `🕒 Updated: ${entry.updatedAt}`
                     );
                 }
+                if (sysCmd.kind === "statusByName") {
+                    // Natural language: "anti phishing udah jalan?" / "gimana daily_reminder?"
+                    // Fuzzy-match against registry; fall back to helpful guidance if no match.
+                    const entry = findSystemByFuzzyName(systemRegistry, sysCmd.query);
+                    if (entry) {
+                        const statusEmoji = entry.status === "on" ? "🟢" : entry.status === "off" ? "⚪" : "🔴";
+                        return message.reply(
+                            `${statusEmoji} **${entry.name}** _(${entry.id})_\n` +
+                            `Status: **${entry.status.toUpperCase()}**\n` +
+                            (entry.description ? `📝 ${entry.description}\n` : "") +
+                            (entry.schedule ? `⏰ Schedule: ${entry.schedule.dailyAt ?? entry.schedule.cron ?? "(none)"}\n` : "") +
+                            `🕒 Updated: ${entry.updatedAt}\n\n` +
+                            `_Mau toggle? Bilang "nyalakan ${entry.id}" / "matikan ${entry.id}"_`
+                        );
+                    }
+                    // No matching system — guide user instead of falling through to AI
+                    const all = systemRegistry.list();
+                    const knownIds = all.map((e) => `\`${e.id}\``).join(", ") || "(kosong)";
+                    return message.reply(
+                        `❓ Gw nggak nemu system yang cocok dengan **"${sysCmd.query}"** di registry.\n\n` +
+                        `📋 System yang tersedia: ${knownIds}\n\n` +
+                        `Kalau emang mau bikin system baru, kasih tau dong konsep + cara kerjanya — jangan cuma nama.`
+                    );
+                }
             } catch (err) {
                 logger.error("system_registry.cmd_failed", { error: err?.message, cmd: sysCmd });
                 return message.reply(`❌ Gagal proses system command: ${err?.message ?? "unknown"}`);
@@ -766,7 +825,7 @@ client.on("messageCreate", async (message) => {
         else cooldown.consume(message.author.id, null);
 
         // Intercept DYNAMIC_REQUEST — show confirmation before generating code.
-        const dynReq = pickDynamicRequest(instruction);
+        const dynReq = pickDynamicRequest(instruction, userInput);
         if (dynReq) {
             processingLock.delete(message.guild.id);
             if (progressMsg) await progressMsg.edit("🔧 Lagi ngecek fitur baru...").catch(() => {});

@@ -9,6 +9,7 @@ import {
     resetDefaultRegistry,
     formatSystemList,
     parseSystemCommand,
+    findSystemByFuzzyName,
 } from "../Modules/systemRegistry.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -224,6 +225,99 @@ test("parseSystemCommand: unknown falls through", () => {
 test("parseSystemCommand: handles null/non-string", () => {
     assert.equal(parseSystemCommand(undefined).kind, "unknown");
     assert.equal(parseSystemCommand(42).kind, "unknown");
+});
+
+// ---------- parseSystemCommand: new natural-language patterns ----------
+
+test("parseSystemCommand: 'system apa saja yang sedang berjalan' is list", () => {
+    // The user's exact chat message that previously fell through to AI
+    assert.equal(parseSystemCommand("system apa saja yang sedang berjalan").kind, "list");
+});
+
+test("parseSystemCommand: 'system apa yang aktif' is list", () => {
+    assert.equal(parseSystemCommand("system apa yang aktif").kind, "list");
+});
+
+test("parseSystemCommand: 'system apa aja yang jalan' is list", () => {
+    assert.equal(parseSystemCommand("system apa aja yang jalan").kind, "list");
+});
+
+test("parseSystemCommand: 'semua sistem' is list", () => {
+    assert.equal(parseSystemCommand("semua sistem").kind, "list");
+    assert.equal(parseSystemCommand("semua fitur").kind, "list");
+});
+
+test("parseSystemCommand: 'daftar sistem' is list", () => {
+    assert.equal(parseSystemCommand("daftar sistem").kind, "list");
+});
+
+test("parseSystemCommand: 'untuk system anti_phishing' is statusByName", () => {
+    const r = parseSystemCommand("untuk system anti_phishing udah jalan?");
+    assert.equal(r.kind, "statusByName");
+    assert.equal(r.query, "anti_phishing");
+});
+
+test("parseSystemCommand: 'anti_phishing udah jalan?' is statusByName", () => {
+    const r = parseSystemCommand("anti_phishing udah jalan?");
+    assert.equal(r.kind, "statusByName");
+    assert.equal(r.query, "anti_phishing");
+});
+
+test("parseSystemCommand: 'daily_reminder aktif?' is statusByName", () => {
+    const r = parseSystemCommand("daily_reminder aktif?");
+    assert.equal(r.kind, "statusByName");
+    assert.equal(r.query, "daily_reminder");
+});
+
+test("parseSystemCommand: 'gimana daily_reminder?' is statusByName", () => {
+    const r = parseSystemCommand("gimana daily_reminder?");
+    assert.equal(r.kind, "statusByName");
+    assert.equal(r.query, "daily_reminder");
+});
+
+test("parseSystemCommand: 'apakah anti_phishing aktif?' is statusByName", () => {
+    const r = parseSystemCommand("apakah anti_phishing aktif?");
+    assert.equal(r.kind, "statusByName");
+    assert.equal(r.query, "anti_phishing");
+});
+
+test("parseSystemCommand: 'bikin anti_phishing untuk filter link' is unknown (request, not question)", () => {
+    // Imperative verbs like "bikin" must NOT be classified as a question.
+    // Let it fall through to AI for DYNAMIC_REQUEST.
+    assert.equal(parseSystemCommand("bikin anti_phishing untuk filter link").kind, "unknown");
+});
+
+// ---------- findSystemByFuzzyName ----------
+
+test("findSystemByFuzzyName: exact id match", () => {
+    const r = new SystemRegistry({ filePath: TMP_PATH, autoLoad: false });
+    r.entries.set("anti_phishing", { id: "anti_phishing", name: "Anti Phishing", status: "on", description: "", schedule: null, metadata: {}, createdAt: "", updatedAt: "" });
+    assert.equal(findSystemByFuzzyName(r, "anti_phishing").id, "anti_phishing");
+});
+
+test("findSystemByFuzzyName: space → underscore normalization", () => {
+    const r = new SystemRegistry({ filePath: TMP_PATH, autoLoad: false });
+    r.entries.set("anti_phishing", { id: "anti_phishing", name: "Anti Phishing", status: "on", description: "", schedule: null, metadata: {}, createdAt: "", updatedAt: "" });
+    // "anti phishing" with space → normalize to "anti_phishing" → exact match
+    const found = findSystemByFuzzyName(r, "anti phishing");
+    assert.ok(found);
+    assert.equal(found.id, "anti_phishing");
+});
+
+test("findSystemByFuzzyName: partial match", () => {
+    const r = new SystemRegistry({ filePath: TMP_PATH, autoLoad: false });
+    r.entries.set("daily_reminder", { id: "daily_reminder", name: "Daily Reminder", status: "on", description: "", schedule: null, metadata: {}, createdAt: "", updatedAt: "" });
+    // "daily" is a partial substring of "daily_reminder"
+    const found = findSystemByFuzzyName(r, "daily");
+    assert.ok(found);
+    assert.equal(found.id, "daily_reminder");
+});
+
+test("findSystemByFuzzyName: returns null for empty/missing registry", () => {
+    const r = new SystemRegistry({ filePath: TMP_PATH, autoLoad: false });
+    assert.equal(findSystemByFuzzyName(r, "anything"), null);
+    assert.equal(findSystemByFuzzyName(null, "anything"), null);
+    assert.equal(findSystemByFuzzyName(r, null), null);
 });
 
 // ---------- default registry singleton ----------
