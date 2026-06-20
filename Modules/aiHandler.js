@@ -53,7 +53,7 @@ function getClient() {
 const PRIMARY_MODEL = process.env.AI_MODEL || "openai/gpt-4o-mini";
 const FALLBACK_MODEL = process.env.AI_FALLBACK_MODEL || "openai/gpt-3.5-turbo";
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 5;
 const BASE_RETRY_DELAY_MS = 800;
 
 const systemPrompt = `JSON only. You are a High-Level Discord Agent.
@@ -124,7 +124,10 @@ function isRetryable(err) {
     if (code && ["ETIMEDOUT", "ECONNRESET", "ENOTFOUND", "ECONNREFUSED"].includes(code)) return true;
 
     const msg = String(err?.message ?? "").toLowerCase();
-    return msg.includes("timeout") || msg.includes("rate limit") || msg.includes("temporarily");
+    if (msg.includes("timeout") || msg.includes("rate limit") || msg.includes("temporarily")) return true;
+    if (msg.includes("empty content")) return true;
+
+    return false;
 }
 
 /**
@@ -269,7 +272,26 @@ export async function getAiInstruction(userInput, imageUrls = []) {
             logger.debug("ai.call.attempt", { attempt, model, hasImages: imageUrls.length > 0 });
             const completion = await callLlmOnce(client, model, userInput, imageUrls);
 
-            const content = completion.choices?.[0]?.message?.content;
+            let content = completion.choices?.[0]?.message?.content;
+            const reasoningContent = completion.choices?.[0]?.message?.reasoning_content;
+
+            // Log raw response for debugging empty content issues
+            if (!content) {
+                logger.debug("ai.empty_content.raw_response", {
+                    model,
+                    finishReason: completion.choices?.[0]?.finish_reason,
+                    hasReasoningContent: Boolean(reasoningContent),
+                    reasoningLength: reasoningContent?.length ?? 0,
+                    usage: completion.usage,
+                });
+            }
+
+            // Fallback to reasoning_content for reasoning models (e.g., Nemotron)
+            if (!content && reasoningContent) {
+                logger.info("ai.reasoning_fallback.used", { model, reasoningLength: reasoningContent.length });
+                content = reasoningContent;
+            }
+
             if (!content) {
                 throw new Error("AI returned empty content");
             }

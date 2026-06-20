@@ -199,3 +199,17 @@ test("buildUserContent: handles null/undefined userInput gracefully", () => {
 test("buildUserContent: text-only when imageUrls is empty array", () => {
     assert.equal(buildUserContent("just text", []), "just text");
 });
+
+// ---------- Empty content retry behavior (Nemotron free-tier fix) ----------
+
+test("isRetryable: 'AI returned empty content' message IS retryable", () => {
+    assert.equal(isRetryable({ message: "AI returned empty content" }), true);
+});
+
+test("isRetryable: 'empty content' in any casing IS retryable", () => {
+    assert.equal(isRetryable({ message: "Provider returned Empty Content due to rate limit" }), true);
+});
+
+test("isRetryable: 'temporarily' is retryable", () => {
+    assert.equal(isRetryable({ message: "Service temporarily unavailable" }), true);
+});
